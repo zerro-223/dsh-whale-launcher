@@ -81,10 +81,22 @@ cargo build --release
 - 前端：原生 HTML/CSS/JS（零 npm 依赖）
 - 后端：Rust（所有阻塞操作在后台线程执行，UI 零阻塞）
 
-## 说明
+## 图标署名与授权
 
-- 鲸鱼娘图标素材来源于 [fornarwhal/deepseek-whale-girl-icon](https://github.com/fornarwhal/deepseek-whale-girl-icon)
-  （DeepSeek 社区二创形象），使用前请查阅该仓库的许可条款；请勿用于商业用途。
+鲸鱼娘图标素材的署名与授权如下（来源仓库：
+[fornarwhal/deepseek-whale-girl-icon](https://github.com/fornarwhal/deepseek-whale-girl-icon)）：
+
+- **角色形象来源**：上善无形（原创 OC「溟月」）
+- **DeepSeek 元素二创**：ZipZipPipe（GPT Image 2）
+- **改进版修复**：QYQCAMIAO
+- **授权协议**：**CC BY-NC-SA 4.0**（须署名、非商用、相同方式共享）
+
+许可说明：
+
+- 本仓库**代码**（tauri/ 等）遵循 [MIT](LICENSE) 许可
+- 本仓库**图标素材**（assets/、tauri/src-tauri/icons/、tauri/ui/logo.png）遵循
+  **CC BY-NC-SA 4.0**，仅限署名、非商业用途，衍生作品须以相同方式共享
+- 素材来自网络流传，具体作者未完全确认；如原作者认为不妥，请联系删除
 
 ## License
 
