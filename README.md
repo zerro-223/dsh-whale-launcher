@@ -83,7 +83,8 @@ cargo build --release
 
 ## 说明
 
-- 图标素材为个人使用图片，请勿用于商业用途。
+- 鲸鱼娘图标素材来源于 [fornarwhal/deepseek-whale-girl-icon](https://github.com/fornarwhal/deepseek-whale-girl-icon)
+  （DeepSeek 社区二创形象），使用前请查阅该仓库的许可条款；请勿用于商业用途。
 
 ## License
 
