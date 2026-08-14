@@ -81,10 +81,8 @@ cargo build --release
 - 前端：原生 HTML/CSS/JS（零 npm 依赖）
 - 后端：Rust（所有阻塞操作在后台线程执行，UI 零阻塞）
 
-## 致谢
+## 说明
 
-- 本项目开发过程中使用了 **DeepSeek Harness**（AI 编程助手）辅助编写与调试代码。
-  感谢其提供的开发支持；本项目为独立个人项目，与 DeepSeek 官方无关联。
 - 图标素材为个人使用图片，请勿用于商业用途。
 
 ## License
