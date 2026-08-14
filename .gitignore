@@ -1,0 +1,28 @@
+# 构建产物
+tauri/src-tauri/target/
+
+# 打包产物
+DSH启动器/
+*.zip
+
+# 本地配置（含个人路径，勿上传）
+settings.json
+tauri/src-tauri/settings.json
+launcher_config.json
+
+# DSH 服务器运行时数据
+dsh-token-usage/
+.test-*
+
+# 归档旧版（含个人路径的旧代码，仅本地参考）
+archive/
+
+# 本地详细文档（含本机路径示例，仓库文档见 README.md）
+README.txt
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 其他
+*.pdb

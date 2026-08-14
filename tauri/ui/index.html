@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DSH 启动器</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="page">
+    <!-- 头部 -->
+    <header id="header">
+      <img id="logo" src="logo.png" alt="logo">
+      <div id="titleBox">
+        <h1 id="title">DeepSeek Harness 启动器</h1>
+        <div id="subtitle">一键启动 Web / TUI / Headless · 启动前自动自检 · 代理支持 · 更新检测</div>
+      </div>
+      <div id="statusPill" class="pill" data-running="unknown">● 检测中…</div>
+      <button id="themeBtn" class="btn small">浅色模式</button>
+      <button id="updateBtn" class="btn small">检查更新</button>
+    </header>
+
+    <!-- 更新横幅 -->
+    <div id="banner" hidden>
+      <span id="bannerText"></span>
+      <button id="bannerBtn" class="btn accent small">立即更新</button>
+    </div>
+
+    <!-- 主区域 -->
+    <main id="main">
+      <!-- 左：启动卡片 -->
+      <section class="card">
+        <h2 class="section">启动 DSH</h2>
+        <div class="sub">选择运行模式，一键启动</div>
+        <div class="row">
+          <button id="webBtn" class="btn accent big">启动 Web 界面</button>
+          <button id="browserBtn" class="btn big">打开浏览器</button>
+        </div>
+        <div class="row">
+          <button id="webOpenBtn" class="btn mid">启动并自动打开浏览器</button>
+          <button id="tuiBtn" class="btn mid">启动 TUI 终端</button>
+        </div>
+        <h2 class="section">Headless 无头问答</h2>
+        <div class="row">
+          <input id="taskInput" type="text" placeholder="输入问题，例如：解释一下这个项目的架构…">
+          <button id="runBtn" class="btn accent">执行</button>
+        </div>
+        <h2 class="section">最近任务</h2>
+        <div id="historyBox" class="chips"></div>
+        <div id="hint" class="sub">提示：TUI / Headless 会在新开的命令行窗口中运行；Headless 完成后窗口保持打开，可随时关闭。Web 模式在后台运行，可随时用「打开浏览器」访问。</div>
+        <div class="row">
+          <button id="dirBtn" class="btn mini">打开安装目录</button>
+          <button id="cmdBtn" class="btn mini">复制 Web 启动命令</button>
+          <button id="restartBtn" class="btn mini">重启 DSH</button>
+        </div>
+      </section>
+
+      <!-- 右：自检卡片 -->
+      <section class="card">
+        <h2 class="section">启动前自检</h2>
+        <div class="sub">自动检查安装环境，异常项会给出修复方法</div>
+        <div id="checks"></div>
+        <div class="row" id="checksBtns">
+          <button id="recheckBtn" class="btn mid">重新自检</button>
+          <button id="fixBtn" class="btn mid">复制修复命令</button>
+        </div>
+      </section>
+    </main>
+
+    <!-- 代理条 -->
+    <div id="proxyBar" class="bar">
+      <label class="switch">
+        <input type="checkbox" id="proxySwitch">
+        <span class="track"></span>
+        <span class="label">使用代理运行 DSH</span>
+      </label>
+      <span class="sub">代理地址</span>
+      <input id="proxyInput" type="text" placeholder="http://127.0.0.1:7890">
+      <button id="importBtn" class="btn small">从系统代理导入</button>
+      <span id="proxyHint" class="sub">支持 http://127.0.0.1:7890 或 http=…;https=…</span>
+    </div>
+
+    <!-- 底部 -->
+    <footer id="footer">
+      <span id="activity" class="sub">就绪</span>
+      <span id="version" class="sub">v3.1.2</span>
+    </footer>
+  </div>
+  <script src="main.js"></script>
+</body>
+</html>

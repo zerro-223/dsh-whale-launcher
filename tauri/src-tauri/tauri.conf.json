@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "DSH-Launcher",
+  "version": "3.1.2",
+  "identifier": "com.dsh.launcher",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "DSH 启动器",
+        "width": 940,
+        "height": 750,
+        "minWidth": 880,
+        "minHeight": 680,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "icons/icon.ico",
+      "icons/128x128.png",
+      "icons/256x256.png"
+    ]
+  }
+}
