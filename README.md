@@ -9,13 +9,14 @@ DeepSeek Harness 图形界面一键启动器 —— 基于 **Tauri 2**（Rust + 
 
 - **一键启动**：Web 界面 / TUI 终端 / Headless 无头问答（结果窗口保持打开）
 - **重启 DSH**：停止 3080 端口进程后按当前配置重新启动
-- **启动前自检**：Node.js / DSH 程序文件 / 目录联接 junction / npm 缓存 / 系统代理 / 运行状态
+- **启动前自检**：Node.js / DSH 程序文件（自动识别安装位置）/ npm 缓存 / 系统代理 / 运行状态
 - **代理支持**：勾选后自动注入 `HTTP_PROXY` / `HTTPS_PROXY` 与 `NODE_USE_ENV_PROXY=1`
   （Node 的 fetch 默认忽略环境变量代理，此开关是代理生效的关键），
   开启时自动同步 Windows 系统代理地址
 - **状态轮询**：每 2 秒检测 DSH 运行状态（状态胶囊）
 - **更新检测与手动更新**：自动检查 `@deepseek-ai/dsh` 新版本（npm registry），
-  发现后仅提示，由用户点击「立即更新」并二次确认后执行 `npm install`，绝不自动更新
+  发现后仅提示，由用户点击「立即更新」并二次确认后执行 `npm install`，绝不自动更新；
+  未安装 DSH 时提示「未安装」，可一键执行 `npm install -g` 完成安装
 - **深色 / 浅色主题**：CSS 变量一键切换，配置存 WebView2 localStorage
 - **Headless 历史**：最近任务一键重跑
 - **快捷工具**：打开安装目录 / 复制 Web 启动命令 / 复制修复命令
@@ -35,20 +36,27 @@ DeepSeek Harness 图形界面一键启动器 —— 基于 **Tauri 2**（Rust + 
 2. 在同目录创建 `settings.json`（按你的环境填写，见下节）
 3. 双击 exe 运行。需要 WebView2 运行时（Win10/11 系统自带）
 
-### settings.json 配置
+### settings.json 配置（全部可选）
 
-所有机器相关路径都从 `settings.json` 读取，**源码中不含任何个人路径**：
+DSH 安装位置**自动识别**，无需手动配置：依次检查 settings.json 中显式填写的路径
+（如有）、npm 全局安装目录（`npm root -g`）、npx 缓存目录（npm cache /
+`%LocalAppData%\npm-cache` 下的 `_npx\<hash>`）。任何安装布局（默认 C 盘、D 盘、
+全局安装）都能直接使用，不再要求"挪到 D 盘 + junction"。
+
+`settings.json` 只需放在 exe 同目录，按需填写：
 
 ```json
 {
   "junctionPath": "C:\\Users\\<你的用户名>\\AppData\\Local\\npm-cache\\_npx\\<hash>",
   "dDrivePath": "D:\\npm-cache\\_npx\\<hash>",
-  "npmrcPath": "C:\\Users\\<你的用户名>\\.npmrc",
   "webPort": 3080
 }
 ```
 
-缺省值为空，未配置时自检项会显示 FAIL，配置后自动恢复。
+- `junctionPath` / `dDrivePath`：可选。仅在显式填写时作为 DSH 安装位置的候选路径，
+  不填则完全自动识别
+- `webPort`：可选，DSH Web 服务端口，默认 3080
+- 缺失或未配置时所有字段使用缺省值，不影响启动器正常工作
 
 ## 构建
 

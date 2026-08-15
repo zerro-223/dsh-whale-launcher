@@ -10,12 +10,12 @@
   <div id="page">
     <!-- 头部 -->
     <header id="header">
-      <img id="logo" src="logo.png" alt="logo">
+      <img id="logo" src="logo.png" alt="DSH">
       <div id="titleBox">
         <h1 id="title">DeepSeek Harness 启动器</h1>
-        <div id="subtitle">一键启动 Web / TUI / Headless · 启动前自动自检 · 代理支持 · 更新检测</div>
+        <div id="subtitle">DSH · Desktop Launcher</div>
       </div>
-      <div id="statusPill" class="pill" data-running="unknown">● 检测中…</div>
+      <div id="statusPill" class="pill" data-running="unknown">检测中…</div>
       <button id="themeBtn" class="btn small">浅色模式</button>
       <button id="updateBtn" class="btn small">检查更新</button>
     </header>
@@ -47,7 +47,7 @@
         </div>
         <h2 class="section">最近任务</h2>
         <div id="historyBox" class="chips"></div>
-        <div id="hint" class="sub">提示：TUI / Headless 会在新开的命令行窗口中运行；Headless 完成后窗口保持打开，可随时关闭。Web 模式在后台运行，可随时用「打开浏览器」访问。</div>
+        <div id="hint" class="sub">TUI 与 Headless 会在新命令行窗口中运行，Headless 完成后窗口保持打开；Web 模式后台运行，随时可用「打开浏览器」访问。</div>
         <div class="row">
           <button id="dirBtn" class="btn mini">打开安装目录</button>
           <button id="cmdBtn" class="btn mini">复制 Web 启动命令</button>
@@ -83,7 +83,7 @@
     <!-- 底部 -->
     <footer id="footer">
       <span id="activity" class="sub">就绪</span>
-      <span id="version" class="sub">v1.0.0</span>
+      <span id="version" class="sub"></span>
     </footer>
   </div>
   <script src="main.js"></script>

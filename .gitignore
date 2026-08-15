@@ -12,6 +12,7 @@ launcher_config.json
 
 # DSH 服务器运行时数据
 dsh-token-usage/
+.radar-models.json
 .test-*
 
 # 归档旧版（含个人路径的旧代码，仅本地参考）
