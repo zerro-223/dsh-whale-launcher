@@ -109,10 +109,27 @@ async function startWeb(notify = true) {
     return true;
   } catch (e) { setActivity("启动失败：" + cleanMsg(e)); return false; }
 }
-$("webBtn").addEventListener("click", () => startWeb(true));
-$("browserBtn").addEventListener("click", () => { invoke("open_browser"); setActivity("已调用浏览器打开 " + webUrl); });
-$("webOpenBtn").addEventListener("click", async () => {
+// 「启动 Web 界面」：启动（已在运行则跳过）后自动打开浏览器
+$("webBtn").addEventListener("click", async () => {
   if (await startWeb(false)) { setActivity("DSH 已就绪，即将打开浏览器…"); setTimeout(() => invoke("open_browser"), 1500); }
+});
+$("browserBtn").addEventListener("click", () => { invoke("open_browser"); setActivity("已调用浏览器打开 " + webUrl); });
+// 「关闭 Web 界面」：终止 DSH Web 进程，不重启
+$("webOpenBtn").addEventListener("click", async () => {
+  const btn = $("webOpenBtn");
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = "关闭中…";
+  try {
+    const r = await invoke("stop_web");
+    if (r === "not-running") { setActivity("DSH Web 界面未在运行"); return; }
+    setActivity("Web 界面已关闭");
+  } catch (e) {
+    if (String(e).includes("still-running")) {
+      setActivity("未能停止 DSH 进程（可能权限不足）");
+    } else { setActivity("关闭失败：" + cleanMsg(e)); }
+  } finally {
+    btn.disabled = false; btn.textContent = "关闭 Web 界面";
+  }
 });
 $("tuiBtn").addEventListener("click", async () => {
   try { await invoke("start_tui", { proxyOn: cfg.proxyEnabled, proxyAddr: cfg.proxyAddr }); setActivity("TUI 已在新的命令行窗口启动"); }

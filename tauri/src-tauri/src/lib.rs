@@ -814,6 +814,41 @@ async fn restart_dsh(proxy_on: bool, proxy_addr: String) -> Result<String, Strin
     .map_err(|e| e.to_string())?
 }
 
+/// 关闭 Web 界面：仅终止监听 webPort 的 DSH 进程（带命令行身份校验），
+/// 等待端口释放后返回，不重新启动。
+#[tauri::command]
+async fn stop_web() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let pids = find_dsh_pids(settings().web_port);
+        if pids.is_empty() {
+            return Ok("not-running".to_string());
+        }
+        let bin = find_bin().unwrap_or_default();
+        let mut killed = 0usize;
+        for pid in filter_dsh_pids(&pids, &bin) {
+            let _ = Command::new("taskkill")
+                .args(["/F", "/PID", &pid.to_string()])
+                .creation_flags(CREATE_NO_WINDOW)
+                .stdout(Stdio::null()).stderr(Stdio::null())
+                .status();
+            killed += 1;
+        }
+        // 等待端口释放（最多约 6 秒）
+        for _ in 0..24 {
+            if !is_running() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        if is_running() {
+            return Err("still-running".into());
+        }
+        Ok(format!("stopped:{}", killed))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn update_check(proxy_on: bool, proxy_addr: String) -> (Option<String>, Option<String>, Option<String>) {
     // npm view 需要访问网络 registry（可能 2~5 秒），必须在后台线程执行。
@@ -934,8 +969,8 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             checks, status, start_web, open_browser, start_tui, start_headless,
-            restart_dsh, update_check, update_dsh, install_dsh, get_system_proxy_cmd,
-            fix_commands, open_install_dir, get_web_cmd, get_web_url
+            restart_dsh, stop_web, update_check, update_dsh, install_dsh,
+            get_system_proxy_cmd, fix_commands, open_install_dir, get_web_cmd, get_web_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
