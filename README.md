@@ -3,7 +3,9 @@
 DeepSeek Harness 图形界面一键启动器 —— 基于 **Tauri 2**（Rust + WebView2）构建，
 **单个原生 exe（约 7.6MB）**，GPU 合成渲染、CSS 动画、拖动丝滑。
 
-![启动器截图](tauri/docs/screenshot.png)
+| 深色模式 | 浅色模式 |
+| :---: | :---: |
+| ![深色模式](tauri/docs/ui-dark.png) | ![浅色模式](tauri/docs/ui-light.png) |
 
 ## 功能
 
