@@ -4,23 +4,41 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DSH 启动器</title>
+  <!-- 首帧前定主题（详见 theme.js）：head 内同步加载，渲染阻塞不闪屏；
+       独立文件以满足严格 CSP 的 script-src 'self' -->
+  <script src="theme.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- 自定义标题栏（decorations:false）：整条可拖拽移动窗口，双击最大化/还原；
+       关闭按钮走 curWin.close()，由 onCloseRequested 统一处理托盘/退出逻辑 -->
+  <div id="titlebar" data-tauri-drag-region>
+    <span id="tbTitle" data-tauri-drag-region>DSH 启动器</span>
+    <div id="tbBtns">
+      <button id="tbMin" class="tbBtn" title="最小化" aria-label="最小化">
+        <svg viewBox="0 0 12 12"><path d="M1.5 6h9"/></svg>
+      </button>
+      <button id="tbClose" class="tbBtn tbCloseBtn" title="关闭" aria-label="关闭">
+        <svg viewBox="0 0 12 12"><path d="M2.2 2.2l7.6 7.6M9.8 2.2l-7.6 7.6"/></svg>
+      </button>
+    </div>
+  </div>
   <div id="page">
-    <!-- 头部 -->
+    <!-- 头部（两个视图共用，按钮按 data-view 显隐） -->
     <header id="header">
-      <img id="logo" src="logo.png" alt="DSH">
+      <div id="logoWrap"><img id="logo" src="logo.png" alt="DSH"></div>
       <div id="titleBox">
         <h1 id="title">DeepSeek Harness 启动器</h1>
         <div id="subtitle">DSH · Desktop Launcher</div>
       </div>
-      <div id="statusPill" class="pill" data-running="unknown">检测中…</div>
+      <div id="statusPill" class="pill" data-running="unknown" data-view="home">检测中…</div>
       <button id="themeBtn" class="btn small">浅色模式</button>
-      <button id="updateBtn" class="btn small">检查更新</button>
+      <button id="updateBtn" class="btn small" data-view="home">检查更新</button>
+      <button id="pluginMgrBtn" class="btn small">插件管理</button>
+      <button id="settingsBtn" class="btn small">设置</button>
     </header>
 
-    <!-- 更新横幅 -->
+    <!-- 更新横幅（DSH 本体；显隐由更新检查逻辑控制，不参与视图切换） -->
     <div id="banner" hidden>
       <span id="bannerText"></span>
       <button id="bannerBtn" class="btn accent small">立即更新</button>
@@ -28,62 +46,169 @@
 
     <!-- 主区域 -->
     <main id="main">
-      <!-- 左：启动卡片 -->
-      <section class="card">
-        <h2 class="section">启动 DSH</h2>
-        <div class="sub">选择运行模式，一键启动</div>
-        <div class="row">
-          <button id="webBtn" class="btn accent big">启动 Web 界面</button>
-          <button id="browserBtn" class="btn big">打开浏览器</button>
-        </div>
-        <div class="row">
-          <button id="webOpenBtn" class="btn mid">关闭 Web 界面</button>
-          <button id="tuiBtn" class="btn mid">启动 TUI 终端</button>
-        </div>
-        <h2 class="section">Headless 无头问答</h2>
-        <div class="row">
-          <input id="taskInput" type="text" placeholder="输入问题，例如：解释一下这个项目的架构…">
-          <button id="runBtn" class="btn accent">执行</button>
-        </div>
-        <h2 class="section">最近任务</h2>
-        <div id="historyBox" class="chips"></div>
-        <div id="hint" class="sub">TUI 与 Headless 会在新命令行窗口中运行，Headless 完成后窗口保持打开；Web 模式后台运行，用「启动 Web 界面」启动并打开浏览器，用「关闭 Web 界面」停止。</div>
-        <div class="row">
-          <button id="dirBtn" class="btn mini">打开安装目录</button>
-          <button id="cmdBtn" class="btn mini">复制 Web 启动命令</button>
-          <button id="restartBtn" class="btn mini">重启 DSH</button>
-        </div>
-      </section>
+      <!-- 视图：首页（启动 + 自检） -->
+      <div id="viewHome">
+        <!-- 左：启动卡片 -->
+        <section class="card">
+          <h2 class="section">启动 DSH</h2>
+          <div class="sub">选择运行模式，一键启动</div>
+          <div class="row">
+            <button id="webBtn" class="btn accent big">启动 Web 界面</button>
+            <button id="browserBtn" class="btn big">打开浏览器</button>
+          </div>
+          <div class="row">
+            <button id="webCloseBtn" class="btn mid">关闭 Web 界面</button>
+            <button id="tuiBtn" class="btn mid">启动 TUI 终端</button>
+          </div>
+          <h2 class="section">Headless 无头问答</h2>
+          <div class="row">
+            <input id="taskInput" type="text" placeholder="输入问题，例如：解释一下这个项目的架构…">
+            <button id="runBtn" class="btn accent">执行</button>
+          </div>
+          <h2 class="section">最近任务</h2>
+          <div id="historyBox" class="chips"></div>
+          <div id="hint" class="sub">TUI 与 Headless 会在新命令行窗口中运行，Headless 完成后窗口保持打开；Web 模式后台运行，用「启动 Web 界面」启动并打开浏览器，用「关闭 Web 界面」停止。</div>
+          <div class="row">
+            <button id="dirBtn" class="btn mini">打开安装目录</button>
+            <button id="cmdBtn" class="btn mini">复制 Web 启动命令</button>
+            <button id="restartBtn" class="btn mini">重启 DSH</button>
+          </div>
+        </section>
 
-      <!-- 右：自检卡片 -->
-      <section class="card">
-        <h2 class="section">启动前自检</h2>
-        <div class="sub">自动检查安装环境，异常项会给出修复方法</div>
-        <div id="checks"></div>
-        <div class="row" id="checksBtns">
-          <button id="recheckBtn" class="btn mid">重新自检</button>
-          <button id="fixBtn" class="btn mid">复制修复命令</button>
+        <!-- 右：自检卡片 -->
+        <section class="card">
+          <h2 class="section">启动前自检</h2>
+          <div class="sub">自动检查安装环境，异常项会给出修复方法</div>
+          <div id="checks"></div>
+          <div class="row" id="checksBtns">
+            <button id="recheckBtn" class="btn mid">重新自检</button>
+            <button id="fixBtn" class="btn mid">复制修复命令</button>
+          </div>
+        </section>
+      </div>
+
+      <!-- 视图：插件管理 -->
+      <div id="viewPlugins" hidden>
+        <div class="row" id="installRow">
+          <input id="pluginNameInput" type="text" placeholder="输入 npm 包名安装，例如 dsh-better-sidebar（支持 @scope/name、本地路径）" spellcheck="false">
+          <button id="pluginInstallBtn" class="btn accent">安装</button>
         </div>
-      </section>
+        <div class="row" id="pluginOpsRow">
+          <button id="pluginCheckBtn" class="btn small">检查更新</button>
+          <button id="pluginUpdateAllBtn" class="btn small violet" hidden>全部更新</button>
+          <span class="sub" id="pluginOpsHint">点击「检查更新」查看哪些插件有新版本；点击插件行可展开详情与操作</span>
+        </div>
+        <div id="pluginList" class="busy"><div class="pluginEmpty sub">加载中…</div></div>
+        <div class="sub" id="pluginHint">安装、卸载、启用/禁用或更新后需「重启 DSH」才会生效；内置插件随 DSH 本体安装，不可单独管理。</div>
+      </div>
+      <!-- 视图：设置 -->
+      <div id="viewSettings" hidden>
+        <!-- 代理 -->
+        <section class="card setCard">
+          <h2 class="section">代理</h2>
+          <div class="setRow">
+            <label class="switch">
+              <input type="checkbox" id="setProxySwitch">
+              <span class="track"></span>
+              <span class="label">使用代理运行 DSH</span>
+            </label>
+          </div>
+          <div class="setRow">
+            <span class="setLabel">代理地址</span>
+            <input id="setProxyInput" type="text" placeholder="http://127.0.0.1:7890" spellcheck="false">
+            <button id="setProxyImport" class="btn small">从系统代理导入</button>
+          </div>
+          <div class="sub">启动 DSH 时注入 HTTP(S)_PROXY 与 NODE_USE_ENV_PROXY=1；插件安装/更新等网络操作同样生效。支持 http://127.0.0.1:7890 或 http=…;https=…</div>
+        </section>
+
+        <!-- 启动与运行 -->
+        <section class="card setCard">
+          <h2 class="section">启动与运行</h2>
+          <div class="setRow">
+            <label class="switch">
+              <input type="checkbox" id="setAutoCheck">
+              <span class="track"></span>
+              <span class="label">启动时自动检查 DSH 更新</span>
+            </label>
+          </div>
+          <div class="setRow">
+            <label class="switch">
+              <input type="checkbox" id="setAutoBrowser">
+              <span class="track"></span>
+              <span class="label">「启动 Web 界面」后自动打开浏览器</span>
+            </label>
+          </div>
+          <div class="setRow">
+            <label class="switch">
+              <input type="checkbox" id="setAutoStart">
+              <span class="track"></span>
+              <span class="label">开机自启</span>
+            </label>
+          </div>
+        </section>
+
+        <!-- 窗口行为 -->
+        <section class="card setCard">
+          <h2 class="section">窗口行为</h2>
+          <div class="setRow">
+            <span class="setLabel">点击关闭按钮时</span>
+            <div class="seg" id="setCloseSeg">
+              <button class="segBtn" data-val="tray">隐藏到托盘</button>
+              <button class="segBtn" data-val="quit">直接退出</button>
+            </div>
+            <span class="sub">隐藏到托盘时程序继续在后台轮询状态，可从托盘图标唤出或退出</span>
+          </div>
+        </section>
+
+        <!-- 插件 -->
+        <section class="card setCard">
+          <h2 class="section">插件</h2>
+          <div class="setRow">
+            <span class="setLabel">管理 profile</span>
+            <select id="setProfileSelect" title="插件管理视图操作的 DSH profile"></select>
+          </div>
+          <div class="setRow">
+            <span class="setLabel">npm registry 镜像</span>
+            <input id="setRegistryInput" type="text" placeholder="留空使用官方源，例如 https://registry.npmmirror.com" spellcheck="false">
+          </div>
+          <div class="sub">registry 镜像作用于 DSH/插件的安装、更新与版本检查（npm_config_registry）</div>
+        </section>
+
+        <!-- 数据 -->
+        <section class="card setCard">
+          <h2 class="section">数据</h2>
+          <div class="setRow">
+            <button id="setClearHistory" class="btn small">清空 Headless 历史</button>
+            <span class="sub" id="setHistoryInfo"></span>
+          </div>
+          <div class="setRow">
+            <button id="backupBtn" class="btn small">备份 DSH 数据</button>
+            <button id="backupDirBtn" class="btn small">打开备份目录</button>
+            <span class="sub">备份配置、对话历史与插件清单（不含 DSH 程序与插件实体，插件恢复时自动重建）</span>
+          </div>
+          <div id="backupList"></div>
+          <div class="sub" id="backupHint">恢复会覆盖当前 DSH 配置与历史：请先「关闭 Web 界面」停止 DSH；恢复前自动备份当前状态（pre-restore），恢复后自动重建插件并提示重启。</div>
+        </section>
+      </div>
     </main>
 
-    <!-- 代理条 -->
-    <div id="proxyBar" class="bar">
-      <label class="switch">
-        <input type="checkbox" id="proxySwitch">
-        <span class="track"></span>
-        <span class="label">使用代理运行 DSH</span>
-      </label>
-      <span class="sub">代理地址</span>
-      <input id="proxyInput" type="text" placeholder="http://127.0.0.1:7890">
-      <button id="importBtn" class="btn small">从系统代理导入</button>
-      <span id="proxyHint" class="sub">支持 http://127.0.0.1:7890 或 http=…;https=…</span>
+    <!-- 日志面板（全局：npm/pnpm 进度、web.log 查看） -->
+    <div id="logPanel" hidden>
+      <div class="logHead">
+        <span id="logTitle">运行日志</span>
+        <button id="logClose" class="btn small">收起</button>
+      </div>
+      <pre id="logBody"></pre>
     </div>
 
     <!-- 底部 -->
     <footer id="footer">
       <span id="activity" class="sub">就绪</span>
-      <span id="version" class="sub"></span>
+      <span id="footerRight">
+        <a id="logLink" class="sub" title="查看 web.log（DSH Web 模式运行日志）">web.log</a>
+        <span id="profilePath" class="sub" data-view="plugins"></span>
+        <span id="version" class="sub" data-view="home"></span>
+      </span>
     </footer>
   </div>
   <script src="main.js"></script>
