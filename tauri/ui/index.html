@@ -28,14 +28,18 @@
     <header id="header">
       <div id="logoWrap"><img id="logo" src="logo.png" alt="DSH"></div>
       <div id="titleBox">
+        <div id="productKicker">LOCAL AI WORKSPACE</div>
         <h1 id="title">DeepSeek Harness 启动器</h1>
         <div id="subtitle">DSH · Desktop Launcher</div>
       </div>
       <div id="statusPill" class="pill" data-running="unknown" data-view="home">检测中…</div>
-      <button id="themeBtn" class="btn small">浅色模式</button>
-      <button id="updateBtn" class="btn small" data-view="home">检查更新</button>
-      <button id="pluginMgrBtn" class="btn small">插件管理</button>
-      <button id="settingsBtn" class="btn small">设置</button>
+      <nav id="headerActions" aria-label="启动器导航">
+        <button id="themeBtn" class="btn small">浅色模式</button>
+        <button id="updateBtn" class="btn small" data-view="home">检查更新</button>
+        <button id="repoBtn" class="btn small" title="在系统浏览器打开 DeepSeek Harness GitHub 仓库" aria-label="打开 DeepSeek Harness GitHub 仓库">GitHub 仓库</button>
+        <button id="pluginMgrBtn" class="btn small">插件管理</button>
+        <button id="settingsBtn" class="btn small">设置</button>
+      </nav>
     </header>
 
     <!-- 更新横幅（DSH 本体；显隐由更新检查逻辑控制，不参与视图切换） -->
@@ -48,8 +52,21 @@
     <main id="main">
       <!-- 视图：首页（启动 + 自检） -->
       <div id="viewHome">
+        <section id="homeOverview" aria-label="运行方式概览">
+          <div class="overviewCopy">
+            <span class="eyebrow">CONTROL CENTER</span>
+            <strong>选择适合当前任务的运行方式</strong>
+            <span class="sub">Web 用于持续工作，TUI 适合终端操作，Headless 用于快速执行单次任务。</span>
+          </div>
+          <div class="overviewModes" aria-hidden="true">
+            <span><b>WEB</b><small>后台服务</small></span>
+            <span><b>TUI</b><small>终端交互</small></span>
+            <span><b>CLI</b><small>单次任务</small></span>
+          </div>
+        </section>
         <!-- 左：启动卡片 -->
-        <section class="card">
+        <section class="card launchCard">
+          <div class="cardEyebrow">PRIMARY ACTIONS</div>
           <h2 class="section">启动 DSH</h2>
           <div class="sub">选择运行模式，一键启动</div>
           <div class="row">
@@ -76,7 +93,8 @@
         </section>
 
         <!-- 右：自检卡片 -->
-        <section class="card">
+        <section class="card checksCard">
+          <div class="cardEyebrow">ENVIRONMENT STATUS</div>
           <h2 class="section">启动前自检</h2>
           <div class="sub">自动检查安装环境，异常项会给出修复方法</div>
           <div id="checks"></div>
@@ -103,6 +121,22 @@
       </div>
       <!-- 视图：设置 -->
       <div id="viewSettings" hidden>
+        <!-- 外观 -->
+        <section class="card setCard">
+          <h2 class="section">外观</h2>
+          <div class="setRow">
+            <span class="setLabel">配色主题</span>
+            <div class="swatches" id="accentSwatches">
+              <button class="swatch" data-accent="teal"   title="青碧（默认）"></button>
+              <button class="swatch" data-accent="blue"   title="靛蓝"></button>
+              <button class="swatch" data-accent="violet" title="紫罗兰"></button>
+              <button class="swatch" data-accent="amber"  title="琥珀"></button>
+              <button class="swatch" data-accent="rose"   title="玫瑰"></button>
+            </div>
+            <span class="sub">切换强调色与背景光效配色，即时生效；深浅模式用顶部按钮切换</span>
+          </div>
+        </section>
+
         <!-- 代理 -->
         <section class="card setCard">
           <h2 class="section">代理</h2>
@@ -211,6 +245,10 @@
       </span>
     </footer>
   </div>
+  <!-- core.js = 工具/主题/配置；chrome.js = 窗口外观与日志面板；main.js = 业务逻辑。
+       依赖顺序加载（无模块系统，三者共享 window 命名空间） -->
+  <script src="core.js"></script>
+  <script src="chrome.js"></script>
   <script src="main.js"></script>
 </body>
 </html>

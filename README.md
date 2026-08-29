@@ -36,6 +36,11 @@ DeepSeek Harness 图形界面一键启动器 —— 基于 **Tauri 2**（Rust + 
   （单实例）
 - **运行日志面板**：安装/更新等 npm/pnpm 操作的完整输出实时显示在可收起的
   日志面板；页脚「web.log」链接可直接查看 DSH Web 模式日志尾部
+- **数据备份 / 恢复**：一键镜像打包 $DSH_HOME（排除 node_modules）到 exe 旁
+  `backups/`，自动保留最近 5 份；恢复前自动备份现状（pre-restore，保留 2 份）、
+  解压逐条目安全校验（防 ZipSlip）、失败自动回滚，恢复后自动重建插件依赖。
+  ⚠️ 备份文件包含 `.credentials.yaml`（API 密钥等凭据），请妥善保管，
+  不要上传到网盘或公共机器
 - **快捷工具**：打开安装目录 / 复制 Web 启动命令 / 复制修复命令
 - **设置页**（窗口内视图）：代理配置（原首页代理条迁入）、启动时自动检查更新、
   启动 Web 后自动打开浏览器、开机自启（注册表 Run 键）、关闭按钮行为
@@ -70,14 +75,24 @@ DSH 安装位置**自动识别**，无需手动配置：依次检查 settings.js
 {
   "junctionPath": "C:\\Users\\<你的用户名>\\AppData\\Local\\npm-cache\\_npx\\<hash>",
   "dDrivePath": "D:\\npm-cache\\_npx\\<hash>",
-  "webPort": 3080
+  "webPort": 3080,
+  "pluginProfile": "web",
+  "registry": "",
+  "closeAction": "tray"
 }
 ```
 
 - `junctionPath` / `dDrivePath`：可选。仅在显式填写时作为 DSH 安装位置的候选路径，
   不填则完全自动识别
 - `webPort`：可选，DSH Web 服务端口，默认 3080
-- 缺失或未配置时所有字段使用缺省值，不影响启动器正常工作
+- `pluginProfile`：可选，插件管理视图操作的 profile，默认 `web`（设置页可改）
+- `registry`：可选，npm registry 镜像地址（如 `https://registry.npmmirror.com`），
+  空为官方源（设置页可改）
+- `closeAction`：可选，点击关闭按钮的行为：`tray`（隐藏到托盘，默认）或
+  `quit`（直接退出）（设置页可改）
+- 缺失或未配置时所有字段使用缺省值，不影响启动器正常工作；
+  文件损坏（非法 JSON）时启动器回退默认配置并在自检面板提示，
+  且设置页保存会被拒绝（避免覆盖丢失未管理的字段）
 
 ## 构建
 
@@ -96,7 +111,7 @@ cargo build --release
 
 ```
 ├── tauri/
-│   ├── ui/              前端（index.html / style.css / main.js，纯静态无构建链）
+│   ├── ui/              前端（index.html / core.js / chrome.js / main.js，纯静态无构建链）
 │   ├── src-tauri/       Rust 后端（src/lib.rs 全部命令逻辑）
 │   └── docs/            文档图片
 ├── assets/              全部图像资源（原图 / 抠图 / 生成的图标）

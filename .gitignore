@@ -1,5 +1,7 @@
 # 构建产物
 tauri/src-tauri/target/
+# Tauri 构建时生成的 ACL schema（随 Tauri 版本变化，不入库）
+tauri/src-tauri/gen/
 
 # 打包产物
 DSH启动器/

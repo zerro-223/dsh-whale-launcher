@@ -1,6 +1,6 @@
 [package]
 name = "dsh-launcher"
-version = "1.2.0"
+version = "1.3.0"
 description = "DSH 启动器 - DeepSeek Harness 图形界面一键启动器"
 edition = "2021"
 
@@ -14,10 +14,14 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 png = "0.17"
+# 备份打包/解压：纯 Rust 实现（stored + deflate），替代经 PowerShell 调
+# .NET ZipArchive 的方案，消除脚本拼接转义面，并让打包/解压可单元测试。
+# 仅启用 deflate，避免 aes/zstd/lzma 等无用特性拖累体积与编译时间。
+zip = { version = "2", default-features = false, features = ["deflate"] }
 windows-registry = "0.4"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Security", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [profile.release]
 strip = true

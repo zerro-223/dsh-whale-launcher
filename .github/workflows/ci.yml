@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "assets/**", "tauri/docs/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  rust:
+    name: Rust 检查与测试
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Rust 缓存
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: tauri/src-tauri
+      - name: 格式检查
+        run: cargo fmt --manifest-path tauri/src-tauri/Cargo.toml -- --check
+      - name: Clippy（警告视为错误）
+        run: cargo clippy --manifest-path tauri/src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: 测试
+        run: cargo test --manifest-path tauri/src-tauri/Cargo.toml
+
+  web:
+    name: 前端语法检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: JS 语法检查（无打包链，node --check 即可捕获断链/语法错误）
+        run: |
+          for f in tauri/ui/*.js; do
+            node --check "$f"
+          done

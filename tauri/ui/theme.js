@@ -8,5 +8,7 @@
     var t = c.theme || "system";
     if (t === "system") t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     document.documentElement.dataset.theme = t;
+    // 配色主题（强调色）同样首帧前写入，避免重启闪回默认青色
+    document.documentElement.dataset.accent = c.colorTheme || "teal";
   } catch (e) { /* 默认浅色变量兜底 */ }
 })();

@@ -1,257 +1,23 @@
-// DSH 启动器前端（Tauri 2）
-// 通过 window.__TAURI__.core.invoke 调用 Rust 后端，localStorage 持久化配置。
-const { invoke } = window.__TAURI__.core;
-const CFG_KEY = "dshLauncher.v1";
+// DSH 启动器前端业务逻辑（Tauri 2）
+// 通过 window.__TAURI__.core.invoke 调用 Rust 后端。
+// 文件组织：core.js = 工具/主题/配置；chrome.js = 窗口外观与日志面板；
+// 本文件 = 业务动作（自检/启动/更新/插件/备份/设置）。
+// 配置存放约定：UI 偏好（主题/代理/历史等）存 localStorage，
+// 影响子进程行为的配置（closeAction/pluginProfile/registry）存 exe 旁 settings.json。
+const DSH_REPOSITORY_URL = "https://github.com/deepseek-ai/deepseek-harness";
+
+// 全局 cfg（core.js 的 loadCfg/saveCfg 读写此对象）
+window.cfg = loadCfg();
 
 // Web 服务地址：启动时从后端获取（按 settings.json webPort 计算），前端不硬编码
 let webUrl = "http://127.0.0.1:3080";
 
-// ---------------- 配置 ----------------
-let cfg = loadCfg();
-function loadCfg() {
-  try {
-    const raw = localStorage.getItem(CFG_KEY);
-    if (raw) return Object.assign({ theme: "system", proxyEnabled: false, proxyAddr: "http://127.0.0.1:7890", history: [], autoCheckUpdate: true, autoOpenBrowser: true }, JSON.parse(raw));
-  } catch (e) { /* ignore */ }
-  return { theme: "system", proxyEnabled: false, proxyAddr: "http://127.0.0.1:7890", history: [], autoCheckUpdate: true, autoOpenBrowser: true };
-}
-function saveCfg() {
-  localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
-}
+applyTheme();
+applyAccent();
+initTheme();
+initAccent();
 
-// ---------------- 主题（深色 / 浅色 / 跟随系统 三态循环） ----------------
-const THEME_MODES = ["dark", "light", "system"];
-function resolveTheme() {
-  if (cfg.theme === "system") {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  }
-  return cfg.theme;
-}
-function themeLabel(mode) {
-  return mode === "system" ? "跟随系统" : mode === "dark" ? "深色" : "浅色";
-}
-function applyTheme() {
-  document.documentElement.dataset.theme = resolveTheme();
-  // 按钮显示当前模式（点击循环切换：深色 → 浅色 → 跟随系统）
-  themeBtn.textContent = cfg.theme === "system" ? "跟随系统" : (cfg.theme === "dark" ? "深色模式" : "浅色模式");
-  themeBtn.title = "点击切换主题（深色 → 浅色 → 跟随系统）";
-}
-themeBtn.addEventListener("click", () => {
-  cfg.theme = THEME_MODES[(THEME_MODES.indexOf(cfg.theme) + 1) % THEME_MODES.length];
-  applyTheme(); saveCfg(); setActivity("已切换为" + themeLabel(cfg.theme) + "模式");
-});
-// 系统主题变化时，跟随模式即时刷新
-window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-  if (cfg.theme === "system") applyTheme();
-});
-
-// ---------------- 工具 ----------------
-const $ = (id) => document.getElementById(id);
-const activity = $("activity");
-function setActivity(msg) { activity.textContent = msg; }
-
-// 全局日志面板：npm/pnpm 完整输出流式显示，或展示 web.log 内容
-// 追加走 rAF 攒帧批量渲染：pnpm/npm 高频逐行输出时不再每行触发一次 DOM 写
-const logPanel = {
-  lines: 0,
-  pending: [],
-  rafId: 0,
-  title(t) { $("logTitle").textContent = t; },
-  open() { $("logPanel").hidden = false; },
-  close() { $("logPanel").hidden = true; },
-  clear() {
-    this.pending.length = 0;
-    if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = 0; }
-    $("logBody").textContent = "";
-    this.lines = 0;
-  },
-  append(s) {
-    this.pending.push(s);
-    if (this.rafId) return;
-    this.rafId = requestAnimationFrame(() => {
-      this.rafId = 0;
-      const el = $("logBody");
-      const batch = this.pending.splice(0, this.pending.length);
-      if (!batch.length) return;
-      el.textContent += batch.join("\n") + "\n";
-      this.lines += batch.length;
-      if (this.lines > 400) { // 上限保护，只保留最近 300 行
-        el.textContent = el.textContent.split("\n").slice(-300).join("\n");
-        this.lines = 300;
-      }
-      el.scrollTop = el.scrollHeight;
-    });
-  },
-  show(title, text) { this.title(title); this.clear(); this.append(text); this.open(); },
-};
-$("logClose").addEventListener("click", () => logPanel.close());
-$("logLink").addEventListener("click", async () => {
-  try {
-    const [text, exists] = await invoke("read_web_log");
-    if (!exists) { logPanel.show("web.log", "web.log 不存在（DSH Web 模式尚未启动过）"); return; }
-    logPanel.show("web.log", text.trim() ? text : "（web.log 为空）");
-  } catch (e) { logPanel.show("web.log", "读取失败：" + String(e)); }
-});
-
-// 自定义确认对话框（替代原生 confirm，与界面风格一致）
-// 返回 Promise<boolean>；支持 danger 红色确认按钮
-function uiConfirm({ title, message, okText = "确定", cancelText = "取消", danger = false }) {
-  return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.className = "modalOverlay";
-    overlay.innerHTML = `
-      <div class="modal" role="dialog" aria-modal="true">
-        <div class="modalTitle">${escapeHtml(title)}</div>
-        <div class="modalMsg">${escapeHtml(message)}</div>
-        <div class="modalBtns">
-          <button class="btn modalCancel">${escapeHtml(cancelText)}</button>
-          <button class="btn accent${danger ? " danger" : ""} modalOk">${escapeHtml(okText)}</button>
-        </div>
-      </div>`;
-    document.body.appendChild(overlay);
-    const cleanup = (val) => {
-      overlay.remove();
-      document.removeEventListener("keydown", onKey);
-      resolve(val);
-    };
-    const onKey = (e) => {
-      if (e.key === "Escape") cleanup(false);
-      else if (e.key === "Enter") cleanup(true);
-    };
-    overlay.querySelector(".modalOk").addEventListener("click", () => cleanup(true));
-    overlay.querySelector(".modalCancel").addEventListener("click", () => cleanup(false));
-    overlay.addEventListener("click", (e) => { if (e.target === overlay) cleanup(false); });
-    document.addEventListener("keydown", onKey);
-  });
-}
-
-// ---------------- 窗口状态记忆（位置/大小存 localStorage，重启恢复） ----------------
-const WIN_KEY = "dshLauncher.windowState";
-let winStateTimer = null;
-async function saveWindowState() {
-  try {
-    // 启动初期（WebView2 未布局完成）innerSize 可能返回异常值（如屏幕尺寸），
-    // 3 秒内不保存，避免把错误尺寸写入状态
-    if (Date.now() - bootTime < 3000) return;
-    const win = window.__TAURI__.window.getCurrentWindow();
-    if (await win.isMaximized()) return; // 最大化时不覆盖已保存的正常状态
-    const sf = await win.scaleFactor();
-    const size = await win.innerSize();
-    // 用 outerPosition（外框位置）：setPosition 设置的也是外框，二者必须一致；
-    // 若用 innerPosition（客户区）恢复，窗口每次重启都会上漂一个标题栏高度
-    const pos = await win.outerPosition();
-    // 统一存逻辑像素（除以缩放比），恢复时用 LogicalSize/LogicalPosition，
-    // 高 DPI 屏上尺寸/位置才不会逐次缩水或漂移
-    localStorage.setItem(WIN_KEY, JSON.stringify({
-      w: Math.round(size.width / sf),
-      h: Math.round(size.height / sf),
-      x: Math.round(pos.x / sf),
-      y: Math.round(pos.y / sf),
-    }));
-  } catch (e) { /* ignore */ }
-}
-async function restoreWindowState() {
-  try {
-    const raw = localStorage.getItem(WIN_KEY);
-    if (!raw) return;
-    const s = JSON.parse(raw);
-    if (!(s.w >= 640 && s.h >= 480 && s.w <= 4000 && s.h <= 3000)) return; // 合理性校验
-    // 必须传 LogicalSize/LogicalPosition 实例：裸 {width,height} 会被序列化成
-    // {"undefined":{...}}，后端 dpi::Size 反序列化失败导致恢复静默失效
-    const W = window.__TAURI__.window;
-    const win = W.getCurrentWindow();
-    await win.setSize(new W.LogicalSize(s.w, s.h));
-    if (typeof s.x === "number" && typeof s.y === "number") {
-      // 可见性校验：恢复位置须与任一显示器工作区相交，否则放弃位置保持居中，
-      // 防止副屏拔掉后窗口恢复到屏幕外「丢失」
-      let visible = true;
-      try {
-        const monitors = await W.availableMonitors();
-        visible = monitors.some((m) => {
-          const sf = m.scaleFactor || 1;
-          const mx = m.workArea.position.x / sf, my = m.workArea.position.y / sf;
-          const mw = m.workArea.size.width / sf, mh = m.workArea.size.height / sf;
-          return s.x < mx + mw && s.x + s.w > mx && s.y < my + mh && s.y + s.h > my;
-        });
-      } catch (e) { visible = true; }
-      if (visible) await win.setPosition(new W.LogicalPosition(s.x, s.y));
-    }
-  } catch (e) { /* ignore */ }
-}
-restoreWindowState();
-const curWin = window.__TAURI__.window.getCurrentWindow();
-curWin.onResized(() => {
-  clearTimeout(winStateTimer);
-  winStateTimer = setTimeout(saveWindowState, 300);
-}).catch(() => {});
-curWin.onMoved(() => {
-  clearTimeout(winStateTimer);
-  winStateTimer = setTimeout(saveWindowState, 300);
-}).catch(() => {});
-
-// 关闭窗口 = 隐藏到后台（托盘常驻）或直接退出（设置页 closeAction 配置）。
-// 用前端 onCloseRequested（事件插件通道），避免 Rust 侧窗口事件注册的时序竞态。
-// 注意：窗口创建初期 WebView2 可能误发一次 close-requested（会导致窗口刚启动
-// 就被隐藏），因此启动后 3 秒内只阻止关闭、不执行隐藏。
-const BOOT_PROTECT_MS = 3000;
-const bootTime = Date.now();
-let closeAction = "tray"; // 由 get_settings 初始化；quit = 放行关闭退出
-curWin.onCloseRequested(async (event) => {
-  // 「直接退出」模式：不阻止，让默认关闭流程销毁窗口并退出进程
-  if (closeAction === "quit") return;
-  event.preventDefault();
-  if (Date.now() - bootTime < BOOT_PROTECT_MS) return;
-  try {
-    // 关键：外部 ShowWindow 恢复的窗口会使 tao 内部可见性 flags 与实际状态
-    // 不同步，直接 hide() 会被判定为"无变化"而空操作；先 show() 同步 flags
-    // 再 hide() 才能可靠隐藏。
-    await curWin.show();
-    await curWin.hide();
-  } catch (e) { /* ignore */ }
-}).catch(() => {});
-// 固定窗口标题：tauri 会把 document.title 同步为窗口标题，若为空则单实例
-// 的 FindWindow("DSH 启动器") 无法找到窗口、恢复显示会失效；同步可能晚于
-// 启动或覆盖手动设置，因此定时守护标题。
-curWin.setTitle("DSH 启动器").catch(() => {});
-// 仅在启动竞态窗口内补设几次即停止（WebView2 加载完成后可能用 document.title
-// 覆盖窗口标题）；不做常驻定时器，避免隐藏到托盘后仍每 3 秒产生 IPC 调用。
-for (const delay of [1500, 4000, 8000]) {
-  setTimeout(() => { curWin.setTitle("DSH 启动器").catch(() => {}); }, delay);
-}
-
-// 自定义标题栏按钮：最小化直接最小化；关闭走 close() 触发上方
-// onCloseRequested 统一处理（tray = 隐藏到托盘 / quit = 放行退出）
-$("tbMin").addEventListener("click", () => { curWin.minimize().catch(() => {}); });
-$("tbClose").addEventListener("click", () => { curWin.close().catch(() => {}); });
-
-function setPill(text, running) {
-  const pill = $("statusPill");
-  pill.textContent = text;
-  pill.dataset.running = String(running);
-}
-function toast(title, msg) { /* 简化：活动栏提示 */ setActivity(msg); }
-// 后端错误信息可能含多行日志末尾，压成一行并截断（完整内容见 exe 旁 web.log）
-function cleanMsg(e) {
-  const s = String(e).replace(/\s*\n+\s*/g, " · ");
-  return s.length > 160 ? "…" + s.slice(-157) : s;
-}
-// 关键操作失败：活动栏显示截断摘要，完整错误展开到日志面板
-function showError(title, e) {
-  setActivity(title + "：" + cleanMsg(e));
-  logPanel.title(title);
-  logPanel.clear();
-  logPanel.append(String(e));
-  logPanel.open();
-}
-// 字节数格式化：1024 → "1.0 KB"，1.5MB → "1.5 MB"
-function formatBytes(n) {
-  if (!n && n !== 0) return "";
-  if (n < 1024) return n + " B";
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
-  return (n / 1024 / 1024).toFixed(1) + " MB";
-}
-
-// 自检状态图标（内联 SVG，随 currentColor 着色，颜色由 CSS 状态类控制）
+// ---------------- 自检状态图标（内联 SVG，随 currentColor 着色） ----------------
 const ICONS = {
   OK: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.3l3.4 3.4L13 4.8"/></svg>',
   FAIL: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>',
@@ -288,12 +54,6 @@ async function refreshChecks() {
   }
   setActivity("自检完成：" + (res.running ? "DSH 正在运行" : "DSH 未运行"));
 }
-function escapeHtml(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
-}
-function escapeAttr(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-}
 $("recheckBtn").addEventListener("click", refreshChecks);
 
 $("fixBtn").addEventListener("click", async () => {
@@ -307,18 +67,32 @@ $("fixBtn").addEventListener("click", async () => {
   }
 });
 
-// ---------------- 状态轮询 ----------------
-// 偶发 IPC 失败保持上次状态（避免状态胶囊误闪「未运行」），连续 3 次失败才显示未知；
-// 窗口隐藏（托盘）时胶囊不可见，降为 10 秒低频轮询，恢复显示时回到 2 秒
+// ---------------- 状态轮询（三态：running / foreign-port / stopped） ----------------
+// 偶发 IPC 失败保持上次状态（避免状态胶囊误闪），连续 3 次失败才显示未知；
+// 窗口隐藏（托盘）时胶囊不可见，降为 10 秒低频轮询，恢复显示时回到 2 秒。
+// foreign-port = webPort 被无关程序占用（后端已做命令行身份核验），
+// 单独提示而非误报「正在运行」。
 let pollFailures = 0;
+function setPill(state) {
+  const pill = $("statusPill");
+  pill.dataset.running = state;
+  pill.textContent = {
+    running: "DSH 正在运行",
+    "foreign-port": "端口被其他程序占用",
+    stopped: "DSH 未运行",
+    unknown: "状态检测异常",
+  }[state] || "检测中…";
+}
 async function pollStatus() {
   try {
-    const running = await invoke("status");
+    const d = await invoke("status_detail");
     pollFailures = 0;
-    setPill(running ? "DSH 正在运行" : "DSH 未运行", running);
+    if (d.state === "running") setPill("running");
+    else if (d.state === "foreign-port") setPill("foreign-port");
+    else setPill("stopped");
   } catch (e) {
     pollFailures += 1;
-    if (pollFailures >= 3) setPill("状态检测异常", "unknown");
+    if (pollFailures >= 3) setPill("unknown");
   }
   setTimeout(pollStatus, document.hidden ? 10000 : 2000);
 }
@@ -388,7 +162,7 @@ async function startHeadless(task) {
     await invoke("start_headless", { task, proxyOn: cfg.proxyEnabled, proxyAddr: cfg.proxyAddr });
     setActivity("Headless 问答已在新窗口运行（完成后窗口保持打开）");
     addHistory(task);
-  } catch (e) { setActivity("启动失败：" + e); }
+  } catch (e) { showError("启动失败", e); }
 }
 $("runBtn").addEventListener("click", () => startHeadless($("taskInput").value.trim()));
 $("taskInput").addEventListener("keydown", (e) => { if (e.key === "Enter") startHeadless($("taskInput").value.trim()); });
@@ -414,20 +188,25 @@ function addHistory(task) {
 }
 
 // ---------------- 快捷工具 ----------------
-$("dirBtn").addEventListener("click", async () => setActivity(await invoke("open_install_dir")));
+$("dirBtn").addEventListener("click", async () => {
+  try { setActivity(await invoke("open_install_dir")); }
+  catch (e) { setActivity("打开安装目录失败：" + cleanMsg(e)); }
+});
 $("cmdBtn").addEventListener("click", async () => {
   try {
     const cmd = await invoke("get_web_cmd");
     await navigator.clipboard.writeText(cmd);
     setActivity("已复制 Web 启动命令到剪贴板");
-  } catch (e) { setActivity("复制失败：" + e); }
+  } catch (e) { setActivity("复制失败：" + cleanMsg(e)); }
 });
 
 // ---------------- 重启 DSH ----------------
 $("restartBtn").addEventListener("click", async () => {
   const btn = $("restartBtn");
   if (btn.disabled) return;
-  const running = await invoke("status");
+  let running = false;
+  try { running = await invoke("status"); }
+  catch (e) { setActivity("状态检测失败：" + cleanMsg(e)); return; }
   if (!running) { await startWeb(false); setActivity("DSH 未在运行，已直接启动…"); return; }
   if (!(await uiConfirm({ title: "重启 DSH", message: "将终止当前 DSH（" + webUrl + "）并重新启动。\n当前 Web 界面（包括正在进行的会话）会中断，重启后恢复。", okText: "重启" }))) return;
   btn.disabled = true; btn.textContent = "重启中…";
@@ -450,14 +229,16 @@ $("setProxyInput").value = cfg.proxyAddr;
 $("setProxySwitch").addEventListener("change", async (e) => {
   cfg.proxyEnabled = e.target.checked;
   if (cfg.proxyEnabled) {
-    const [enabled, server] = await invoke("get_system_proxy_cmd");
-    if (enabled && server) {
-      cfg.proxyAddr = server; $("setProxyInput").value = server;
-      setActivity("已同步系统代理 " + server + "（与浏览器一致）");
-    } else {
-      setActivity("系统代理未启用，使用下方手动填写的地址");
-    }
-    setActivity("已启用代理；启动 DSH 时将注入 HTTP(S)_PROXY 与 NODE_USE_ENV_PROXY");
+    try {
+      const [enabled, server] = await invoke("get_system_proxy_cmd");
+      if (enabled && server) {
+        cfg.proxyAddr = server; $("setProxyInput").value = server;
+        setActivity("已同步系统代理 " + server + "（与浏览器一致）");
+      } else {
+        setActivity("系统代理未启用，使用下方手动填写的地址");
+      }
+      setActivity("已启用代理；启动 DSH 时将注入 HTTP(S)_PROXY 与 NODE_USE_ENV_PROXY");
+    } catch (e) { setActivity("读取系统代理失败：" + cleanMsg(e)); }
   } else {
     setActivity("已关闭代理；DSH 将直连网络");
   }
@@ -465,13 +246,15 @@ $("setProxySwitch").addEventListener("change", async (e) => {
 });
 $("setProxyInput").addEventListener("change", () => { cfg.proxyAddr = $("setProxyInput").value.trim(); saveCfg(); });
 $("setProxyImport").addEventListener("click", async () => {
-  const [enabled, server] = await invoke("get_system_proxy_cmd");
-  if (!enabled || !server) { setActivity("Windows 系统代理未启用"); return; }
-  $("setProxyInput").value = server;
-  cfg.proxyEnabled = true; cfg.proxyAddr = server;
-  $("setProxySwitch").checked = true;
-  saveCfg();
-  setActivity("已从系统导入代理：" + server);
+  try {
+    const [enabled, server] = await invoke("get_system_proxy_cmd");
+    if (!enabled || !server) { setActivity("Windows 系统代理未启用"); return; }
+    $("setProxyInput").value = server;
+    cfg.proxyEnabled = true; cfg.proxyAddr = server;
+    $("setProxySwitch").checked = true;
+    saveCfg();
+    setActivity("已从系统导入代理：" + server);
+  } catch (e) { setActivity("读取系统代理失败：" + cleanMsg(e)); }
 });
 
 // ---------------- DSH 更新 / 安装 ----------------
@@ -548,22 +331,20 @@ async function checkUpdate() {
     updateState.busy = false;
   }
 }
-function cmpVer(a, b) {
-  const pa = a.split("-")[0].split(".").map(Number);
-  const pb = b.split("-")[0].split(".").map(Number);
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0) ? 1 : -1;
-  }
-  const ra = a.includes("-"), rb = b.includes("-");
-  if (ra !== rb) return rb ? 1 : -1;
-  return a === b ? 0 : (a > b ? 1 : -1);
-}
 
 $("updateBtn").addEventListener("click", () => {
   if (updateState.busy) return;
   if (!updateState.installed) { confirmInstall(); }
   else if (updateState.available) { confirmUpdate(); }
   else { checkUpdate(); }
+});
+$("repoBtn").addEventListener("click", async () => {
+  try {
+    await invoke("open_url", { url: DSH_REPOSITORY_URL });
+    setActivity("已在浏览器打开 DeepSeek Harness GitHub 仓库");
+  } catch (e) {
+    setActivity("打开 GitHub 仓库失败：" + cleanMsg(e));
+  }
 });
 $("bannerBtn").addEventListener("click", () => {
   if (updateState.busy) return;
@@ -680,10 +461,12 @@ $("settingsBtn").addEventListener("click", () => setView(currentView === "home" 
 // ---------------- 设置页 ----------------
 // settings.json 相关配置（closeAction / pluginProfile / registry）加载与保存
 let settingsState = { closeAction: "tray", pluginProfile: "web", registry: "" };
+let activePluginProfile = "web";
 async function loadSettings() {
   try {
     const s = await invoke("get_settings");
     settingsState = s;
+    activePluginProfile = s.pluginProfile || "web";
     // 窗口行为单选
     $("setCloseSeg").querySelectorAll(".segBtn").forEach((b) => {
       b.classList.toggle("on", b.dataset.val === s.closeAction);
@@ -758,7 +541,8 @@ $("setProfileSelect").addEventListener("change", async (e) => {
   try {
     const s = await invoke("save_settings", { patch: { pluginProfile: e.target.value } });
     settingsState = s;
-    updates = null; // 插件视图的更新缓存作废
+    activePluginProfile = s.pluginProfile;
+    resetPluginUpdates(); // 插件视图的更新缓存作废
     setActivity("插件管理 profile 已切换为 " + s.pluginProfile + "，进入插件视图生效");
   } catch (err) {
     setActivity("保存 profile 失败：" + cleanMsg(err));
@@ -885,6 +669,7 @@ $("backupList").addEventListener("click", async (e) => {
 
 // ---------------- 插件管理 ----------------
 let pluginBusy = false;
+let pluginListRequest = 0;
 // 更新检查结果缓存：{ [name]: { installed, latest, error } }；null = 尚未检查
 let updates = null;
 function setPluginBusy(b) {
@@ -893,6 +678,12 @@ function setPluginBusy(b) {
   $("pluginInstallBtn").disabled = b;
   $("pluginCheckBtn").disabled = b;
   $("pluginUpdateAllBtn").disabled = b;
+}
+function resetPluginUpdates() {
+  updates = null;
+  const allBtn = $("pluginUpdateAllBtn");
+  allBtn.hidden = true;
+  allBtn.textContent = "全部更新";
 }
 // npm / pnpm 输出逐行推送到活动栏 + 全局日志面板（完整输出）
 function pluginProgress(label) {
@@ -913,10 +704,10 @@ function renderPlugins(res) {
   const box = $("pluginList");
   box.innerHTML = "";
   // 初始 HTML 带 busy 类（"加载中"），渲染完成必须移除，否则整列表灰置不可点
-  box.classList.remove("busy");
+  box.classList.toggle("busy", pluginBusy);
   $("profilePath").textContent = res.profileDir;
   if (!res.initialized) {
-    box.innerHTML = '<div class="pluginEmpty"><div class="emptyIcon">🧩</div><div class="emptyTitle">web profile 尚未初始化</div><div class="sub">安装第一个插件时会自动创建（' + escapeHtml(res.profileDir) + '）</div></div>';
+    box.innerHTML = '<div class="pluginEmpty"><div class="emptyIcon">🧩</div><div class="emptyTitle">' + escapeHtml(activePluginProfile) + ' profile 尚未初始化</div><div class="sub">安装第一个插件时会自动创建（' + escapeHtml(res.profileDir) + '）</div></div>';
     return;
   }
   // 内置插件（随 DSH 安装）不展示，仅管理用户插件
@@ -978,10 +769,8 @@ function pluginRow(p) {
     <div class="pluginDetail" hidden></div>
     <div class="pluginOpRow" hidden>${ops.join("")}</div>`;
   row.dataset.name = p.name; // 整行点击展开时使用
-  // 键盘可达性：整行可聚焦，Enter/Space 展开/收起
-  row.tabIndex = 0;
-  row.setAttribute("role", "button");
-  row.setAttribute("aria-expanded", "false");
+  // 详情按钮是唯一的键盘展开入口，避免可交互行内嵌套 role=button。
+  row.querySelector(".rowToggle").setAttribute("aria-expanded", "false");
   return row;
 }
 // 清洗 README：去掉对使用者无用的 markdown 原文（图片/徽章/代码块/链接地址/HTML），
@@ -1032,7 +821,7 @@ async function toggleDetail(target) {
   const opRow = row.querySelector(".pluginOpRow");
   // 展开/收起：箭头旋转由 CSS（.pluginRow.expanded .rowToggle）负责，不再改文本
   const expanded = row.classList.toggle("expanded");
-  row.setAttribute("aria-expanded", String(expanded));
+  row.querySelector(".rowToggle").setAttribute("aria-expanded", String(expanded));
   if (!expanded) {
     detail.hidden = true;
     opRow.hidden = true;
@@ -1052,12 +841,15 @@ async function toggleDetail(target) {
 }
 
 async function loadPlugins() {
+  const request = ++pluginListRequest;
   try {
     const res = await invoke("plugin_list");
+    if (request !== pluginListRequest) return;
     renderPlugins(res);
   } catch (e) {
+    if (request !== pluginListRequest) return;
     const box = $("pluginList");
-    box.classList.remove("busy");
+    box.classList.toggle("busy", pluginBusy);
     box.innerHTML = '<div class="pluginEmpty sub">加载失败：' + escapeHtml(String(e)) + "</div>";
     setActivity("插件列表加载失败：" + cleanMsg(e));
   }
@@ -1072,17 +864,19 @@ async function installPlugin() {
     const ver = await invoke("plugin_install", { name, proxyOn: cfg.proxyEnabled, proxyAddr: cfg.proxyAddr, progress: pluginProgress("正在安装 " + name) });
     setActivity("插件 " + name + " 安装完成" + (ver ? "（v" + ver + "）" : "") + "，重启 DSH 后生效");
     input.value = "";
+    resetPluginUpdates();
     await loadPlugins();
   } catch (e) { showError("安装失败", e); }
   finally { setPluginBusy(false); }
 }
 async function removePlugin(name) {
   if (pluginBusy) return;
-  if (!(await uiConfirm({ title: "卸载插件", message: "卸载插件 " + name + "？\n将执行 dsh plugin --profile web remove " + name + "：\n从 profile 移除依赖并停用该插件。", okText: "卸载", danger: true }))) return;
+  if (!(await uiConfirm({ title: "卸载插件", message: "卸载插件 " + name + "？\n将执行 dsh plugin --profile " + activePluginProfile + " remove " + name + "：\n从 profile 移除依赖并停用该插件。", okText: "卸载", danger: true }))) return;
   setPluginBusy(true);
   try {
     await invoke("plugin_remove", { name, proxyOn: cfg.proxyEnabled, proxyAddr: cfg.proxyAddr, progress: pluginProgress("正在卸载 " + name) });
     setActivity("插件 " + name + " 已卸载，重启 DSH 后生效");
+    resetPluginUpdates();
     await loadPlugins();
   } catch (e) { showError("卸载失败", e); }
   finally { setPluginBusy(false); }
@@ -1090,18 +884,19 @@ async function removePlugin(name) {
 // 检查所有用户插件的 registry 最新版本（后端并行 npm view），
 // 结果缓存到 updates 并在渲染时决定是否显示「更新」按钮；
 // 「全部更新」按钮仅在发现有可更新插件后出现（带数量，紫色区别于行内按钮）。
-async function checkUpdates() {
-  if (pluginBusy) return;
+async function checkUpdates(ignoreBusy = false) {
+  if (pluginBusy && !ignoreBusy) return;
   setPluginBusy(true);
   setActivity("正在检查插件更新…");
   try {
     const res = await invoke("plugin_check_updates", { proxyOn: cfg.proxyEnabled, proxyAddr: cfg.proxyAddr });
     updates = {};
-    let updatable = 0, failed = 0;
+    let updatable = 0, failed = 0, skipped = 0;
     for (const u of res) {
       updates[u.name] = u;
       if (u.latest && cmpVer(u.latest, u.installed) > 0) updatable++;
       else if (u.error) failed++;
+      else if (!u.latest) skipped++;
     }
     const allBtn = $("pluginUpdateAllBtn");
     if (updatable > 0) {
@@ -1114,7 +909,11 @@ async function checkUpdates() {
     if (updatable > 0) {
       setActivity("发现 " + updatable + " 个插件可更新" + (failed ? "（" + failed + " 个检查失败）" : ""));
     } else if (failed > 0) {
-      setActivity("所有插件已是最新（" + failed + " 个插件版本检查失败）");
+      setActivity("检查完成：未发现可更新插件（" + failed + " 个插件检查失败）");
+    } else if (skipped > 0) {
+      setActivity("未发现可更新插件（" + skipped + " 个本地依赖未检查）");
+    } else if (res.length === 0) {
+      setActivity("当前 profile 没有可检查的用户插件");
     } else {
       setActivity("所有插件已是最新版本");
     }
@@ -1131,22 +930,22 @@ async function updatePlugin(name) {
     await invoke("plugin_update", { all: false, name, proxyOn: cfg.proxyEnabled, proxyAddr: cfg.proxyAddr, progress: pluginProgress("正在更新 " + name) });
     setActivity("插件 " + name + " 更新完成，重启 DSH 后生效");
     // 更新完成后自动复查，让「更新」按钮随最新状态消失/保留
-    updates = null;
+    resetPluginUpdates();
     await loadPlugins();
-    await checkUpdates();
+    await checkUpdates(true);
   } catch (e) { showError("更新失败", e); }
   finally { setPluginBusy(false); }
 }
 async function updateAllPlugins() {
   if (pluginBusy) return;
-  if (!(await uiConfirm({ title: "全部更新", message: "将所有已安装插件更新到最新版本？\n将执行 pnpm update --latest（在 web profile 目录）。", okText: "全部更新" }))) return;
+  if (!(await uiConfirm({ title: "全部更新", message: "将所有已安装插件更新到最新版本？\n将执行 pnpm update --latest（在 " + activePluginProfile + " profile 目录）。", okText: "全部更新" }))) return;
   setPluginBusy(true);
   try {
     await invoke("plugin_update", { all: true, name: null, proxyOn: cfg.proxyEnabled, proxyAddr: cfg.proxyAddr, progress: pluginProgress("正在更新全部插件") });
     setActivity("全部插件更新完成，重启 DSH 后生效");
-    updates = null;
+    resetPluginUpdates();
     await loadPlugins();
-    await checkUpdates();
+    await checkUpdates(true);
   } catch (e) { showError("更新失败", e); }
   finally { setPluginBusy(false); }
 }
@@ -1193,9 +992,10 @@ $("pluginList").addEventListener("click", (e) => {
   const row = e.target.closest(".pluginRow");
   if (row) toggleDetail(row);
 });
-// 键盘：聚焦插件行时 Enter / Space 展开收起
+// 键盘：详情按钮本身支持 Enter / Space；行内其它按钮不触发展开。
 $("pluginList").addEventListener("keydown", (e) => {
   if (e.key !== "Enter" && e.key !== " ") return;
+  if (!e.target.closest(".rowToggle")) return;
   const row = e.target.closest(".pluginRow");
   if (!row || pluginBusy) return;
   e.preventDefault();
@@ -1203,7 +1003,6 @@ $("pluginList").addEventListener("keydown", (e) => {
 });
 
 // ---------------- 初始化 ----------------
-applyTheme();
 renderHistory();
 refreshChecks();
 setView("home");              // 应用 data-view 显隐，初始为首页
