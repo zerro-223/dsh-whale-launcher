@@ -7,6 +7,8 @@
   <!-- 首帧前定主题（详见 theme.js）：head 内同步加载，渲染阻塞不闪屏；
        独立文件以满足严格 CSP 的 script-src 'self' -->
   <script src="theme.js"></script>
+  <!-- 纯函数工具层（转义/formatBytes/cmpVer），不依赖 DOM，head 内加载 -->
+  <script src="util.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>

@@ -1,0 +1,32 @@
+name: Release
+
+# tag 触发（v*）：构建 release exe 并上传到 GitHub Release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 构建并发布 exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust 缓存
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: tauri/src-tauri
+      - name: 构建（build.rs 会校验 Cargo.toml 与 tauri.conf.json 版本一致）
+        run: cargo build --release --manifest-path tauri/src-tauri/Cargo.toml
+      - name: 整理产物
+        shell: pwsh
+        run: Copy-Item tauri/src-tauri/target/release/dsh-launcher.exe "DSH-Launcher-${{ github.ref_name }}.exe"
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: DSH-Launcher-*.exe
+          generate_release_notes: true

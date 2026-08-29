@@ -98,26 +98,45 @@ async function pollStatus() {
 }
 
 // ---------------- 启动动作 ----------------
+// 返回 "running"（已在运行）/ "starting"（进程已启动、端口就绪中）/ "ready" / "failed"
 async function startWeb(notify = true) {
   try {
     const r = await invoke("start_web", { proxyOn: cfg.proxyEnabled, proxyAddr: cfg.proxyAddr });
     if (r === "already-running") {
       if (notify) setActivity("DSH 已在运行：" + webUrl);
-      return true;
+      return "running";
+    }
+    if (r === "starting") {
+      // 后端 8 秒等待窗口内端口未就绪但进程存活：不是失败，交给状态轮询确认
+      setActivity("DSH 进程已启动，端口就绪中…（就绪后状态胶囊会显示运行状态）");
+      return "starting";
     }
     // 后端会等待端口就绪后才返回，此处即已启动完成
     setActivity("Web 模式已启动" + (cfg.proxyEnabled ? "（已启用代理）" : "") + "，服务已就绪");
-    return true;
-  } catch (e) { showError("启动失败", e); return false; }
+    return "ready";
+  } catch (e) { showError("启动失败", e); return "failed"; }
 }
-// 「启动 Web 界面」：启动（已在运行则跳过）后按设置决定是否自动打开浏览器
+// 「启动 Web 界面」：启动（已在运行则跳过）后按设置决定是否自动打开浏览器。
+// busy 防抖：启动要等端口就绪（最长 8 秒），双击会并发拉起两个 DSH 进程
+let webStartBusy = false;
 $("webBtn").addEventListener("click", async () => {
-  if (!(await startWeb(false))) return;
-  if (cfg.autoOpenBrowser !== false) {
-    setActivity("DSH 已就绪，即将打开浏览器…");
-    setTimeout(() => invoke("open_browser"), 1500);
-  } else {
-    setActivity("DSH 已就绪：" + webUrl);
+  if (webStartBusy) return;
+  webStartBusy = true;
+  const btn = $("webBtn");
+  btn.disabled = true;
+  try {
+    const r = await startWeb(false);
+    if (r === "ready" && cfg.autoOpenBrowser !== false) {
+      setActivity("DSH 已就绪，即将打开浏览器…");
+      setTimeout(() => invoke("open_browser"), 1500);
+    } else if (r === "ready") {
+      setActivity("DSH 已就绪：" + webUrl);
+    }
+    // starting / running / failed 的提示已由 startWeb 设置；
+    // starting 时不自动开浏览器（端口未就绪只会打开错误页）
+  } finally {
+    webStartBusy = false;
+    btn.disabled = false;
   }
 });
 $("browserBtn").addEventListener("click", () => { invoke("open_browser"); setActivity("已调用浏览器打开 " + webUrl); });
@@ -138,7 +157,13 @@ $("webCloseBtn").addEventListener("click", async () => {
     btn.disabled = false; btn.textContent = "关闭 Web 界面";
   }
 });
+// TUI 首次点击会自动安装插件（可能耗时数十秒），同样需要 busy 防抖
+let tuiStartBusy = false;
 $("tuiBtn").addEventListener("click", async () => {
+  if (tuiStartBusy) return;
+  tuiStartBusy = true;
+  const btn = $("tuiBtn");
+  btn.disabled = true;
   try {
     // 首次使用会自动安装 TUI（@deepseek-harness-tui/dsh-tui），
     // 安装进度推送到活动栏 + 日志面板（有进度输出时才打开面板）
@@ -154,6 +179,10 @@ $("tuiBtn").addEventListener("click", async () => {
     const r = await invoke("start_tui", { proxyOn: cfg.proxyEnabled, proxyAddr: cfg.proxyAddr, progress });
     setActivity(r);
   } catch (e) { showError("启动 TUI 失败", e); }
+  finally {
+    tuiStartBusy = false;
+    btn.disabled = false;
+  }
 });
 
 async function startHeadless(task) {
@@ -207,13 +236,13 @@ $("restartBtn").addEventListener("click", async () => {
   let running = false;
   try { running = await invoke("status"); }
   catch (e) { setActivity("状态检测失败：" + cleanMsg(e)); return; }
-  if (!running) { await startWeb(false); setActivity("DSH 未在运行，已直接启动…"); return; }
-  if (!(await uiConfirm({ title: "重启 DSH", message: "将终止当前 DSH（" + webUrl + "）并重新启动。\n当前 Web 界面（包括正在进行的会话）会中断，重启后恢复。", okText: "重启" }))) return;
+  if (!running) { await startWeb(false); setActivity("DSH 未在运行，已直接启动…"); return; }  if (!(await uiConfirm({ title: "重启 DSH", message: "将终止当前 DSH（" + webUrl + "）并重新启动。\n当前 Web 界面（包括正在进行的会话）会中断，重启后恢复。", okText: "重启" }))) return;
   btn.disabled = true; btn.textContent = "重启中…";
   setActivity("正在重启 DSH…");
   try {
     const r = await invoke("restart_dsh", { proxyOn: cfg.proxyEnabled, proxyAddr: cfg.proxyAddr });
     if (r === "ok") setActivity("DSH 已重启完成（Web 模式后台运行中）");
+    else if (r === "starting") setActivity("DSH 重启中：进程已启动，等待端口就绪…");
   } catch (e) {
     if (String(e).includes("still-running")) {
       setActivity("未能停止现有 DSH 进程（可能权限不足），未重新启动");
@@ -233,11 +262,11 @@ $("setProxySwitch").addEventListener("change", async (e) => {
       const [enabled, server] = await invoke("get_system_proxy_cmd");
       if (enabled && server) {
         cfg.proxyAddr = server; $("setProxyInput").value = server;
-        setActivity("已同步系统代理 " + server + "（与浏览器一致）");
+        // 合并为一条提示：连续两次 setActivity 会互相覆盖，第一条永远看不到
+        setActivity("已启用代理并同步系统代理 " + server + "（与浏览器一致）");
       } else {
-        setActivity("系统代理未启用，使用下方手动填写的地址");
+        setActivity("已启用代理；系统代理未启用，使用手动填写的地址。启动 DSH 时将注入 HTTP(S)_PROXY 与 NODE_USE_ENV_PROXY");
       }
-      setActivity("已启用代理；启动 DSH 时将注入 HTTP(S)_PROXY 与 NODE_USE_ENV_PROXY");
     } catch (e) { setActivity("读取系统代理失败：" + cleanMsg(e)); }
   } else {
     setActivity("已关闭代理；DSH 将直连网络");
@@ -291,22 +320,23 @@ async function checkUpdate() {
   setUpdateBtn("检查中…", false);
   setActivity("正在检查 DSH 更新…");
   try {
-    const [installed, latest, err] = await invoke("update_check", { proxyOn: cfg.proxyEnabled, proxyAddr: cfg.proxyAddr });
-    updateState.installed = installed; updateState.latest = latest;
-    if (err) {
+    const res = await invoke("update_check", { proxyOn: cfg.proxyEnabled, proxyAddr: cfg.proxyAddr });
+    updateState.installed = res.installed; updateState.latest = res.latest;
+    if (res.error) {
       // 无法连接 registry 与「已是最新」区分开；错误信息含 npm 真实报错
       updateState.available = false;
       hideBanner();
-      if (installed) {
+      if (res.installed) {
         setUpdateBtn("检查更新", false);
-        setActivity("更新检查失败：" + cleanMsg(err));
+        setActivity("更新检查失败：" + cleanMsg(res.error));
       } else {
         setUpdateBtn("未安装 DSH", true);
         showInstallBanner(null);
-        setActivity("未检测到 DSH；更新检查失败：" + cleanMsg(err));
+        setActivity("未检测到 DSH；更新检查失败：" + cleanMsg(res.error));
       }
       return;
     }
+    const latest = res.latest, installed = res.installed;
     if (!installed) {
       // 未安装：提示一键安装
       updateState.available = false;
@@ -462,9 +492,13 @@ $("settingsBtn").addEventListener("click", () => setView(currentView === "home" 
 // settings.json 相关配置（closeAction / pluginProfile / registry）加载与保存
 let settingsState = { closeAction: "tray", pluginProfile: "web", registry: "" };
 let activePluginProfile = "web";
+// 请求竞态防护（与 loadPlugins 同款）：快速切换视图时旧响应不得覆盖新状态
+let settingsRequest = 0;
 async function loadSettings() {
+  const request = ++settingsRequest;
   try {
     const s = await invoke("get_settings");
+    if (request !== settingsRequest) return;
     settingsState = s;
     activePluginProfile = s.pluginProfile || "web";
     // 窗口行为单选
@@ -473,6 +507,7 @@ async function loadSettings() {
     });
     // profile 下拉（保留当前选中，若列表中不存在则补一项）
     const profiles = await invoke("list_profiles");
+    if (request !== settingsRequest) return;
     const sel = $("setProfileSelect");
     const current = sel.value || s.pluginProfile;
     sel.innerHTML = "";
@@ -487,10 +522,12 @@ async function loadSettings() {
     // registry
     $("setRegistryInput").value = s.registry;
   } catch (e) {
+    if (request !== settingsRequest) return;
     setActivity("设置加载失败：" + cleanMsg(e));
   }
   // 开机自启
   try { $("setAutoStart").checked = await invoke("get_autostart"); } catch (e) { /* ignore */ }
+  if (request !== settingsRequest) return;
   // localStorage 配置
   $("setAutoCheck").checked = cfg.autoCheckUpdate !== false;
   $("setAutoBrowser").checked = cfg.autoOpenBrowser !== false;
@@ -581,10 +618,13 @@ function setBackupBusy(b) {
 }
 
 // 备份列表：从后端读取（按时间倒序），渲染 文件名 + 恢复前徽标 + 时间/大小 + 恢复按钮
+let backupListRequest = 0;
 async function loadBackups() {
+  const request = ++backupListRequest;
   const box = $("backupList");
   try {
     const list = await invoke("list_backups");
+    if (request !== backupListRequest) return;
     if (!list.length) {
       box.innerHTML = '<div class="backupEmpty">暂无备份 —— 点击「备份 DSH 数据」创建第一份</div>';
       return;
@@ -602,6 +642,7 @@ async function loadBackups() {
       box.appendChild(row);
     }
   } catch (e) {
+    if (request !== backupListRequest) return;
     box.innerHTML = '<div class="backupEmpty">备份列表加载失败</div>';
   }
 }

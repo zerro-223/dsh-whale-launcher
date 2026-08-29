@@ -58,9 +58,12 @@ DeepSeek Harness 图形界面一键启动器 —— 基于 **Tauri 2**（Rust + 
 
 ## 安装使用
 
-1. 下载 `DSH启动器.exe`（本仓库的 Release 或自行构建），放在任意目录
+1. 下载 `DSH启动器.exe`（本仓库的 Release 或自行构建），放在任意**可写目录**
 2. 在同目录创建 `settings.json`（按你的环境填写，见下节）
 3. 双击 exe 运行。需要 WebView2 运行时（Win10/11 系统自带）
+
+> ⚠️ exe 需放在可写目录：`settings.json`、`web.log`、`backups/` 都生成在
+> exe 旁，放进 Program Files 等只读位置会导致设置保存与备份失败。
 
 ### settings.json 配置（全部可选）
 
@@ -111,13 +114,16 @@ cargo build --release
 
 ```
 ├── tauri/
-│   ├── ui/              前端（index.html / core.js / chrome.js / main.js，纯静态无构建链）
-│   ├── src-tauri/       Rust 后端（src/lib.rs 全部命令逻辑）
+│   ├── ui/              前端（index.html / theme.js / util.js / core.js / chrome.js / main.js + test/，纯静态无构建链）
+│   ├── src-tauri/       Rust 后端（src/ 按职责分模块：settings / backup / plugins / process 等，lib.rs 只保留入口）
 │   └── docs/            文档图片
 ├── assets/              全部图像资源（原图 / 抠图 / 生成的图标）
 ├── tools/               图像处理脚本（make_icon.py / cutout_bg.py）
+├── dsh-launcher-prototype.html  界面设计原型（已由 tauri/ui 实现，留作参考）
 └── archive/             已归档的旧版本（PySide6 版源码，仅作参考）
 ```
+
+版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 技术栈
 

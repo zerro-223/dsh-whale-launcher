@@ -21,6 +21,12 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: tauri/src-tauri
+      - name: 安装 cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: 依赖安全审计（RustSec advisory db）
+        run: cargo audit --file tauri/src-tauri/Cargo.lock
       - name: 格式检查
         run: cargo fmt --manifest-path tauri/src-tauri/Cargo.toml -- --check
       - name: Clippy（警告视为错误）
@@ -29,7 +35,7 @@ jobs:
         run: cargo test --manifest-path tauri/src-tauri/Cargo.toml
 
   web:
-    name: 前端语法检查
+    name: 前端检查与测试
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,3 +47,5 @@ jobs:
           for f in tauri/ui/*.js; do
             node --check "$f"
           done
+      - name: JS 单元测试（纯函数工具层）
+        run: node --test tauri/ui/test/*.test.mjs

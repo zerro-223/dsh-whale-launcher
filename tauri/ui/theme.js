@@ -3,8 +3,11 @@
 // 独立文件在 head 中同步加载（渲染阻塞，效果等同内联脚本），
 // 以便启用严格 CSP（script-src 'self'，禁止内联脚本）。
 (function () {
+  // localStorage key 的单一来源：core.js 读取此常量
+  // （theme.js 保证最先加载，之后的脚本都能拿到）
+  window.DSH_CFG_KEY = "dshLauncher.v1";
   try {
-    var c = JSON.parse(localStorage.getItem("dshLauncher.v1") || "{}");
+    var c = JSON.parse(localStorage.getItem(window.DSH_CFG_KEY) || "{}");
     var t = c.theme || "system";
     if (t === "system") t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     document.documentElement.dataset.theme = t;

@@ -7,6 +7,11 @@ tauri/src-tauri/gen/
 DSH启动器/
 *.zip
 
+# 启动器运行产物：备份 zip 含 .credentials.yaml（API 密钥等凭据），
+# 绝不能入库（exe 放在仓库根目录测试时会在这里生成）
+backups/
+web.log
+
 # 本地配置（含个人路径，勿上传）
 settings.json
 tauri/src-tauri/settings.json
