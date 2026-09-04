@@ -2,7 +2,7 @@
 // 通过 window.__TAURI__.core.invoke 调用 Rust 后端。
 // 文件组织：core.js = 工具/主题/配置；chrome.js = 窗口外观与日志面板；
 // 本文件 = 业务动作（自检/启动/更新/插件/备份/设置）。
-// 配置存放约定：UI 偏好（主题/代理/历史等）存 localStorage，
+// 配置存放约定：UI 偏好（主题/代理等）存 localStorage，
 // 影响子进程行为的配置（closeAction/pluginProfile/registry）存 exe 旁 settings.json。
 const DSH_REPOSITORY_URL = "https://github.com/deepseek-ai/deepseek-harness";
 
@@ -77,7 +77,7 @@ function setPill(state) {
   const pill = $("statusPill");
   pill.dataset.running = state;
   pill.textContent = {
-    running: "DSH 正在运行",
+    running: "DSH 运行中",
     "foreign-port": "端口被其他程序占用",
     stopped: "DSH 未运行",
     unknown: "状态检测异常",
@@ -184,37 +184,6 @@ $("tuiBtn").addEventListener("click", async () => {
     btn.disabled = false;
   }
 });
-
-async function startHeadless(task) {
-  if (!task) { setActivity("请先输入问题"); return; }
-  try {
-    await invoke("start_headless", { task, proxyOn: cfg.proxyEnabled, proxyAddr: cfg.proxyAddr });
-    setActivity("Headless 问答已在新窗口运行（完成后窗口保持打开）");
-    addHistory(task);
-  } catch (e) { showError("启动失败", e); }
-}
-$("runBtn").addEventListener("click", () => startHeadless($("taskInput").value.trim()));
-$("taskInput").addEventListener("keydown", (e) => { if (e.key === "Enter") startHeadless($("taskInput").value.trim()); });
-
-// ---------------- 历史 ----------------
-function renderHistory() {
-  const box = $("historyBox");
-  box.innerHTML = "";
-  const list = cfg.history.slice(0, 4);
-  if (list.length === 0) { box.innerHTML = '<span class="sub">🐋 暂无历史任务，执行过的会显示在这里，点击可重跑</span>'; return; }
-  for (const task of list) {
-    const b = document.createElement("button");
-    b.className = "chip";
-    b.textContent = task.length > 12 ? task.slice(0, 12) + "…" : task;
-    b.title = task;
-    b.addEventListener("click", () => { $("taskInput").value = task; startHeadless(task); });
-    box.appendChild(b);
-  }
-}
-function addHistory(task) {
-  cfg.history = [task, ...cfg.history.filter(t => t !== task)].slice(0, 6);
-  saveCfg(); renderHistory();
-}
 
 // ---------------- 快捷工具 ----------------
 $("dirBtn").addEventListener("click", async () => {
@@ -531,7 +500,6 @@ async function loadSettings() {
   // localStorage 配置
   $("setAutoCheck").checked = cfg.autoCheckUpdate !== false;
   $("setAutoBrowser").checked = cfg.autoOpenBrowser !== false;
-  $("setHistoryInfo").textContent = "当前 " + cfg.history.length + " 条";
   loadBackups(); // 每次进入设置页刷新备份列表
 }
 // 行为开关（localStorage）
@@ -597,16 +565,6 @@ $("setRegistryInput").addEventListener("change", async (e) => {
     $("setRegistryInput").value = settingsState.registry;
   }
 });
-// 清空 Headless 历史
-$("setClearHistory").addEventListener("click", async () => {
-  if (!(await uiConfirm({ title: "清空历史", message: "确定清空全部 Headless 历史记录？此操作不可恢复。", okText: "清空", danger: true }))) return;
-  cfg.history = [];
-  saveCfg();
-  renderHistory();
-  $("setHistoryInfo").textContent = "已清空";
-  setActivity("Headless 历史已清空");
-});
-
 // ---------------- 数据备份 / 恢复 ----------------
 // 互斥保护：备份与恢复不能同时进行（恢复含 pnpm 重建插件，可能耗时较长）
 let backupBusy = false;
@@ -1044,7 +1002,6 @@ $("pluginList").addEventListener("keydown", (e) => {
 });
 
 // ---------------- 初始化 ----------------
-renderHistory();
 refreshChecks();
 setView("home");              // 应用 data-view 显隐，初始为首页
 setTimeout(pollStatus, 200);   // 首次状态轮询

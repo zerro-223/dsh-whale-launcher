@@ -19,8 +19,8 @@
   依赖安全审计；前端 job 增加 `node --test`
 - `update_check` 命令返回命名结构体（installed / latest / error），
   取代前端按位置解构的匿名三元组
-- 启动操作互斥：`start_web` / `start_tui` / `start_headless` /
-  `restart_dsh` 共用一把锁，与备份/恢复互斥同款实现（RAII guard）
+- 启动操作互斥：`start_web` / `start_tui` / `restart_dsh` 共用一把锁，
+  与备份/恢复互斥同款实现（RAII guard）
 
 ### 修复
 

@@ -9,7 +9,7 @@
 //! - [`process`]：端口/PID 跟踪与 DSH 运行状态三态判定
 //! - [`backup`]：数据备份 / 恢复（zip 打包、ZipSlip 防护、改名换位恢复）
 //! - [`plugins`]：插件管理（官方 dsh plugin 通道 + 轻量 YAML 解析）
-//! - [`launch`]：Web / TUI / Headless 启动、重启与停止（web.log）
+//! - [`launch`]：Web / TUI 启动、重启与停止（web.log）
 //! - [`checks`]：启动前自检
 //! - [`update`]：版本检测、更新检查与一键安装
 //! - [`tray`]：系统托盘、单实例互斥与主窗口行为
@@ -87,7 +87,6 @@ pub fn run() {
             launch::start_web,
             launch::open_browser,
             launch::start_tui,
-            launch::start_headless,
             launch::restart_dsh,
             launch::stop_web,
             update::update_check,

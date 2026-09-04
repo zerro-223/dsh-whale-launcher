@@ -75,8 +75,9 @@
     .brand { min-width: 0; flex: 1 1 230px; }
     .kicker, .eyebrow { color: var(--faint); font: 700 9px/1.2 "Cascadia Code", Consolas, monospace; letter-spacing: .14em; }
     .brand h1 { margin: 3px 0 0; font-size: 18px; line-height: 1.2; }
-    .status { height: 32px; display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; white-space: nowrap; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--sub); font-size: 11px; }
-    .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px var(--ok-soft); }
+    .status { min-width: 126px; height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 15px; white-space: nowrap; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); color: var(--sub); font-size: 12px; font-weight: 750; }
+    .status::before { content: ""; width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px var(--ok-soft), 0 0 13px 2px color-mix(in srgb, var(--ok) 55%, transparent); animation: statusPulse 1.8s ease-in-out infinite; }
+    .status.running { color: var(--ok); background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 48%, var(--line)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok) 16%, transparent), 0 0 24px -8px var(--ok); }
     .nav { display: flex; gap: 3px; padding: 4px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; }
     .nav button, .btn { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); cursor: pointer; transition: .18s ease; }
     .nav button { height: 30px; padding: 5px 9px; border-color: transparent; background: transparent; font-size: 11px; }
@@ -113,11 +114,6 @@
     .row .btn { flex: 1; }
     .launch .row:first-of-type .btn { min-height: 48px; font-size: 14px; }
     .launch .row:first-of-type .btn:first-child::before { content: "▶"; margin-right: 7px; font-size: 9px; }
-    .launch input { min-width: 0; flex: 1; height: 40px; padding: 0 13px; color: var(--text); border: 1px solid var(--line); border-radius: 8px; outline: none; background: var(--input); }
-    .launch input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-    .launch .history { min-height: 30px; display: flex; flex-wrap: wrap; gap: 7px; align-content: flex-start; }
-    .chip { border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; background: var(--panel-2); cursor: pointer; font-size: 11px; }
-    .chip:hover { color: var(--accent); border-color: var(--accent); }
     .hint { margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--line); }
     .checks-list { flex: 1; display: flex; flex-direction: column; gap: 4px; padding-top: 2px; }
     .check { display: grid; grid-template-columns: 30px minmax(0,1fr) auto; gap: 2px 10px; align-items: center; padding: 7px 8px; border: 1px solid transparent; border-radius: 9px; }
@@ -156,6 +152,7 @@
     .footer { min-height: 28px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 3px 0; border-top: 1px solid var(--line); color: var(--sub); font-size: 11px; }
     .footer strong { color: var(--accent); font-weight: 700; }
     @keyframes appear { from { opacity: 0; transform: translateY(4px); } }
+    @keyframes statusPulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .62; transform: scale(.78); } }
     @media (max-width: 880px) {
       .shell { padding-inline: 14px; }
       .topbar { flex-wrap: wrap; }
@@ -180,7 +177,6 @@
       .modes { display: none; }
       .row { flex-wrap: wrap; }
       .row .btn { flex: 1 1 calc(50% - 5px); }
-      .launch input, .launch #demo-run { flex-basis: 100%; }
       .settings { display: flex; flex-direction: column; }
       .setting-row { align-items: flex-start; flex-wrap: wrap; }
       .setting-label { min-width: 100%; }
@@ -198,7 +194,7 @@
         <div class="kicker">LOCAL AI WORKSPACE</div>
         <h1>DeepSeek Harness 启动器 <small style="color:var(--faint);font:10px 'Cascadia Code',monospace">v1.3.0</small></h1>
       </div>
-      <div class="status">DSH 正在运行</div>
+      <div class="status running">DSH 运行中</div>
       <nav class="nav" aria-label="页面导航">
         <button class="active" data-target="home"><span>⌂</span>工作台</button>
         <button data-target="plugins"><span>⊞</span>插件管理</button>
@@ -212,8 +208,8 @@
     <main>
       <section class="view home active" id="home">
         <div class="overview">
-          <div class="overview-copy"><span class="eyebrow">CONTROL CENTER</span><strong>选择适合当前任务的运行方式</strong><span class="muted">Web 用于持续工作，TUI 适合终端操作，Headless 用于快速执行单次任务。</span></div>
-          <div class="modes"><span><b>WEB</b><small>后台服务</small></span><span><b>TUI</b><small>终端交互</small></span><span><b>CLI</b><small>单次任务</small></span></div>
+          <div class="overview-copy"><span class="eyebrow">CONTROL CENTER</span><strong>DSH 工作台</strong><span class="muted">启动 Web 服务或打开 TUI 终端，所有运行状态都在这里集中管理。</span></div>
+          <div class="modes"><span><b>WEB</b><small>后台服务</small></span><span><b>TUI</b><small>终端交互</small></span><span><b>LIVE</b><small>实时状态</small></span></div>
         </div>
         <section class="card launch">
           <span class="eyebrow">PRIMARY ACTIONS</span>
@@ -221,11 +217,7 @@
           <span class="muted">选择运行模式，一键启动</span>
           <div class="row"><button class="btn primary">启动 Web 界面</button><button class="btn">打开浏览器</button></div>
           <div class="row"><button class="btn">关闭 Web 界面</button><button class="btn">启动 TUI 终端</button></div>
-          <h2 class="section">Headless 无头问答</h2>
-          <div class="row"><input placeholder="输入问题，例如：解释一下这个项目的架构…"><button id="demo-run" class="btn primary">执行</button></div>
-          <h2 class="section">最近任务</h2>
-          <div class="history"><button class="chip">分析启动流程</button><button class="chip">解释插件加载机制</button></div>
-          <div class="hint muted">TUI 与 Headless 会在新命令行窗口中运行，Headless 完成后窗口保持打开；Web 模式后台运行，随时可以打开浏览器访问。</div>
+          <div class="hint muted">Web 模式在后台运行，可随时打开浏览器访问；TUI 会在新的命令行窗口中启动。</div>
           <div class="row"><button class="btn small">打开安装目录</button><button class="btn small">复制 Web 启动命令</button><button class="btn small">重启 DSH</button></div>
         </section>
         <section class="card checks-card">
@@ -274,10 +266,6 @@
     }));
     document.querySelector('#themeToggle').addEventListener('click', () => {
       root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
-    });
-    document.querySelector('#demo-run').addEventListener('click', (event) => {
-      event.currentTarget.textContent = '已提交';
-      setTimeout(() => { event.currentTarget.textContent = '执行'; }, 1100);
     });
   </script>
 </body>

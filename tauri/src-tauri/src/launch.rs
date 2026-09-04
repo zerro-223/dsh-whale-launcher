@@ -1,4 +1,4 @@
-//! DSH 启动方式：Web 模式（后台 + web.log）、TUI 终端、Headless 无头问答，
+//! DSH 启动方式：Web 模式（后台 + web.log）、TUI 终端，
 //! 以及重启 / 停止与 web.log 查看命令。
 //!
 //! 所有启动类操作共用 START_OP 互斥：Web 启动要等待端口就绪（最长 8 秒），
@@ -22,7 +22,7 @@ use crate::proxy::{npm_proxy_env, proxy_env_or_none};
 use crate::settings::settings;
 use crate::util::{beside_exe, shell_open, OpGuard, CREATE_NEW_CONSOLE, CREATE_NO_WINDOW};
 
-/// 启动类操作互斥（start_web / start_tui / start_headless / restart_dsh）
+/// 启动类操作互斥（start_web / start_tui / restart_dsh）
 static START_OP: AtomicBool = AtomicBool::new(false);
 const START_BUSY_MSG: &str = "另一个启动操作正在进行，请稍候…";
 
@@ -286,42 +286,6 @@ pub(crate) async fn start_tui(
             "TUI 已启动（PID {}），请在弹出的命令行窗口中操作",
             pid
         ))
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-pub(crate) async fn start_headless(
-    task: String,
-    proxy_on: bool,
-    proxy_addr: String,
-) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let _guard = OpGuard::acquire(&START_OP, START_BUSY_MSG)?;
-        let bin = find_bin().ok_or_else(|| "未找到 dsh CLI 入口文件".to_string())?;
-        // 用 PowerShell 而不是 cmd /k：任务文本直接拼进 cmd 命令行时，
-        // 含 " % & | < > 等字符会被 cmd 二次解析（参数错乱甚至命令注入），
-        // 含空格的英文任务也会被拆成多个参数。PowerShell 单引号字符串
-        // 仅需把 ' 翻倍即可安全传递任意文本。
-        // -NoExit 保持窗口：headless 打印完进程即退出，否则窗口秒关看不到回答
-        let script = format!(
-            "& node '{}' --profile headless '{}'",
-            bin.replace('\'', "''"),
-            task.replace('\'', "''"),
-        );
-        let mut cmd = Command::new("powershell");
-        cmd.args(["-NoExit", "-Command", &script])
-            .creation_flags(CREATE_NEW_CONSOLE)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let env = proxy_env_or_none(proxy_on, &proxy_addr);
-        for (k, v) in env {
-            cmd.env(k, v);
-        }
-        cmd.spawn()
-            .map(|_| "started".to_string())
-            .map_err(|e| format!("启动失败：{}", e))
     })
     .await
     .map_err(|e| e.to_string())?

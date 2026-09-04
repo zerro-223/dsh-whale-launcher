@@ -60,7 +60,7 @@ pub(crate) fn wide(s: &str) -> Vec<u16> {
 
 pub(crate) const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
 // GUI 程序派生控制台子进程（npm/where/netstat 等）时默认会弹出一个新控制台窗口，
-// 必须显式加 CREATE_NO_WINDOW 隐藏（TUI / Headless 用 CREATE_NEW_CONSOLE 保持可见）
+// 必须显式加 CREATE_NO_WINDOW 隐藏（TUI 使用 CREATE_NEW_CONSOLE 保持可见）
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// ShellExecuteW 打开目标（URL / 文件 / 目录）：不走 cmd /c start，

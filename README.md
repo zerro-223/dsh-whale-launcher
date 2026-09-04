@@ -9,7 +9,7 @@ DeepSeek Harness 图形界面一键启动器 —— 基于 **Tauri 2**（Rust + 
 
 ## 功能
 
-- **一键启动**：Web 界面 / TUI 终端 / Headless 无头问答（结果窗口保持打开）
+- **一键启动**：Web 界面 / TUI 终端
 - **重启 DSH**：停止 3080 端口进程后按当前配置重新启动
 - **启动前自检**：Node.js / DSH 程序文件（自动识别安装位置）/ npm 缓存 / 系统代理 / 运行状态
 - **代理支持**：勾选后自动注入 `HTTP_PROXY` / `HTTPS_PROXY` 与 `NODE_USE_ENV_PROXY=1`
@@ -22,7 +22,6 @@ DeepSeek Harness 图形界面一键启动器 —— 基于 **Tauri 2**（Rust + 
 - **深色 / 浅色 / 跟随系统主题**：CSS 变量一键切换（三态循环），默认跟随
   系统深浅色并即时响应系统切换，配置存 WebView2 localStorage
 - **窗口状态记忆**：窗口位置与大小自动保存，重启后恢复（最大化时保护不覆盖）
-- **Headless 历史**：最近任务一键重跑
 - **插件管理**：窗口内独立视图（header「插件管理」进入，一键返回首页）——
   插件列表（仅展示用户插件，内置组件不显示），一键安装（输入 npm 包名）、
   卸载、**启用/禁用**（cordis.patch.yml disabled 条目，保留安装、暂时停用）；
@@ -45,7 +44,7 @@ DeepSeek Harness 图形界面一键启动器 —— 基于 **Tauri 2**（Rust + 
 - **设置页**（窗口内视图）：代理配置（原首页代理条迁入）、启动时自动检查更新、
   启动 Web 后自动打开浏览器、开机自启（注册表 Run 键）、关闭按钮行为
   （隐藏到托盘 / 直接退出）、插件管理 profile 选择、npm registry 镜像、
-  清空 Headless 历史——settings.json 相关项即时保存并生效
+  settings.json 相关项即时保存并生效
 
 ## 性能对比
 

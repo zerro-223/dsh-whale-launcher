@@ -13,7 +13,7 @@ const $ = (id) => document.getElementById(id);
 // ---------------- 配置（localStorage） ----------------
 // key 的单一来源在 theme.js（它必须最先执行以避免闪屏），此处只读取
 const CFG_KEY = window.DSH_CFG_KEY;
-const CFG_DEFAULTS = { theme: "system", colorTheme: "teal", proxyEnabled: false, proxyAddr: "http://127.0.0.1:7890", history: [], autoCheckUpdate: true, autoOpenBrowser: true };
+const CFG_DEFAULTS = { theme: "system", colorTheme: "teal", proxyEnabled: false, proxyAddr: "http://127.0.0.1:7890", autoCheckUpdate: true, autoOpenBrowser: true };
 function loadCfg() {
   try {
     const raw = localStorage.getItem(CFG_KEY);
