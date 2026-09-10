@@ -108,16 +108,54 @@ fn run_checks() -> ChecksResult {
         });
     }
 
+    // 更新/安装 DSH 的写入权限与当前权限级别。
+    // 这是"更新失败"最常见的原因（npm 全局目录对普通用户只读），必须在自检里
+    // 可见——否则用户只能拿到 npm 的 EPERM，完全不知道该做什么。
+    let (target, writable) = crate::update::update_target(find_dsh().as_ref());
+    let elevated = crate::util::is_elevated();
+    items.push(CheckItem {
+        name: "运行权限".into(),
+        status: "INFO".into(),
+        detail: if elevated {
+            "以管理员身份运行（受保护目录可写）".into()
+        } else {
+            "普通用户运行；若下面的「更新权限」为 WARN，可用设置页的「以管理员身份重启启动器」解决"
+                .into()
+        },
+    });
+    items.push(CheckItem {
+        name: "更新权限".into(),
+        status: if writable { "OK" } else { "WARN" }.into(),
+        detail: if target.is_empty() {
+            "未能识别 DSH 安装目录（尚未安装？）".into()
+        } else if writable {
+            format!("{} 可写，DSH 可直接更新/安装", target)
+        } else {
+            format!(
+                "{} 对当前用户不可写（只有读+执行权限），更新 DSH 会因权限被拒；\
+                 可在设置页点「以管理员身份重启启动器」后再更新",
+                target
+            )
+        },
+    });
+
     let state = dsh_state();
     items.push(CheckItem {
         name: "运行状态".into(),
         status: "INFO".into(),
         detail: match state {
             DshState::Running => format!("DSH 正在运行：{}", web_url()),
-            DshState::ForeignPort => format!(
-                "端口 {} 被其他程序占用（非 DSH 进程）；可修改 webPort 或停止占用程序",
-                settings().web_port
-            ),
+            DshState::ForeignPort => {
+                // 说清是谁占用——只说"端口被占用"用户没有任何可操作信息
+                let owner = crate::process::port_owner_info(settings().web_port)
+                    .map(|o| format!("，占用者：{}", o.describe()))
+                    .unwrap_or_default();
+                format!(
+                    "端口 {} 被其他程序占用（非 DSH 进程）{}；可在首页结束该进程，或在设置页修改 Web 端口",
+                    settings().web_port,
+                    owner
+                )
+            }
             DshState::Stopped => "DSH 未运行，可点击上方按钮启动".into(),
         },
     });

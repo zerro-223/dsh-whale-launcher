@@ -41,10 +41,14 @@ use crate::settings::settings;
 // ---------------------------------------------------------------------------
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 单实例：已有实例则激活其窗口并退出本进程
-    if !tray::acquire_single_instance() {
+    // 单实例：已有实例则激活其窗口并退出本进程。
+    // `--elevated` 必须豁免互斥：那是「以管理员身份重启」拉起的提权实例，
+    // 若被判定为重复启动就会立即退出，表现为点了按钮毫无反应。
+    let elevated = std::env::args().any(|a| a == "--elevated");
+    if !elevated && !tray::acquire_single_instance() {
         return;
     }
+    util::app_log_line(&format!("启动器启动：管理员={}", util::is_elevated()));
     tauri::Builder::default()
         .setup(|app| {
             tray::setup_tray(app)?;
@@ -84,12 +88,16 @@ pub fn run() {
             checks::checks,
             process::status,
             process::status_detail,
+            process::port_owner,
+            process::kill_port_owner,
             launch::start_web,
             launch::open_browser,
             launch::start_tui,
             launch::restart_dsh,
             launch::stop_web,
             update::update_check,
+            update::update_preflight,
+            update::relaunch_as_admin,
             update::update_dsh,
             update::install_dsh,
             proxy::get_system_proxy_cmd,
@@ -106,6 +114,7 @@ pub fn run() {
             plugins::plugin_detail,
             launch::open_url,
             launch::read_web_log,
+            launch::read_launcher_log,
             settings::get_settings,
             settings::save_settings,
             settings::get_autostart,

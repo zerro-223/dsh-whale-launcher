@@ -8,15 +8,27 @@ use std::time::Duration;
 use tauri::ipc::Channel;
 
 use crate::settings::settings;
-use crate::util::{lock_ok, CREATE_NO_WINDOW};
+use crate::util::{app_log_line, kill_tree, lock_ok, AppLog, CREATE_NO_WINDOW};
 
-// which 结果缓存：PATH 扫描（where）较慢，避免每次自检都跑子进程
-static WHICH_CACHE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, bool>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+// which 结果缓存：PATH 扫描（where）较慢，避免每次自检都跑子进程。
+// 命中结果保留（同一会话内 PATH 基本不变），未命中结果带 TTL：用户完全可能
+// 在启动器运行期间 `npm install -g pnpm`，永久缓存"未找到"会让插件功能一直
+// 报环境缺失，直到手工点一次「重新检查」——表现为修了环境却依然报错。
+static WHICH_CACHE: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, (bool, std::time::Instant)>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// 未命中结果的缓存时长（决定新装的命令最短多久能被识别）
+const WHICH_NEGATIVE_TTL: Duration = Duration::from_secs(60);
 
 pub(crate) fn which(name: &str) -> bool {
-    if let Some(v) = lock_ok(&WHICH_CACHE).get(name) {
-        return *v;
+    {
+        let cache = lock_ok(&WHICH_CACHE);
+        if let Some((found, at)) = cache.get(name) {
+            if *found || at.elapsed() < WHICH_NEGATIVE_TTL {
+                return *found;
+            }
+        }
     }
     let found = Command::new("where")
         .arg(name)
@@ -26,7 +38,7 @@ pub(crate) fn which(name: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
-    lock_ok(&WHICH_CACHE).insert(name.to_string(), found);
+    lock_ok(&WHICH_CACHE).insert(name.to_string(), (found, std::time::Instant::now()));
     found
 }
 
@@ -90,16 +102,19 @@ pub(crate) fn run_npm(args: &[&str]) -> std::io::Result<std::process::Output> {
                 std::thread::sleep(Duration::from_millis(50));
             }
             Ok(None) => {
+                let _ = kill_tree(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = t_out.join();
                 let _ = t_err.join();
+                app_log_line(&format!("npm {} 查询超时（15 秒）", args.join(" ")));
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
                     "npm 查询超时（15 秒）",
                 ));
             }
             Err(e) => {
+                let _ = kill_tree(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = t_out.join();
@@ -133,6 +148,13 @@ pub(crate) fn run_cmd_streaming(
 ) -> Result<(), String> {
     const TAIL_KEEP: usize = 200;
     const COMMAND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+    // 完整输出落盘（exe 旁 launcher.log）：此前只推 UI，失败后无从回溯
+    let log = std::sync::Arc::new(std::sync::Mutex::new(AppLog::open()));
+    {
+        let mut g = lock_ok(&log);
+        g.section(op_name);
+        g.line(&format!("$ {:?}", cmd));
+    }
     let mut child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -142,10 +164,12 @@ pub(crate) fn run_cmd_streaming(
     let err = child.stderr.take().expect("piped stderr");
     // 同时读取 stdout/stderr，避免单管道缓冲写满导致死锁
     let progress = progress.clone();
+    let log_out = std::sync::Arc::clone(&log);
     let t_out = std::thread::spawn(move || {
         let mut lines: std::collections::VecDeque<String> = std::collections::VecDeque::new();
         for line in BufReader::new(out).lines().map_while(Result::ok) {
             let _ = progress.send(line.clone());
+            log_ok(&log_out, &line);
             if lines.len() == TAIL_KEEP {
                 lines.pop_front();
             }
@@ -153,9 +177,11 @@ pub(crate) fn run_cmd_streaming(
         }
         lines
     });
+    let log_err = std::sync::Arc::clone(&log);
     let t_err = std::thread::spawn(move || {
         let mut lines: std::collections::VecDeque<String> = std::collections::VecDeque::new();
         for line in BufReader::new(err).lines().map_while(Result::ok) {
+            log_ok(&log_err, &line);
             if lines.len() == TAIL_KEEP {
                 lines.pop_front();
             }
@@ -171,6 +197,7 @@ pub(crate) fn run_cmd_streaming(
                 std::thread::sleep(Duration::from_millis(250));
             }
             Ok(None) => {
+                let _ = kill_tree(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = t_out.join();
@@ -182,6 +209,7 @@ pub(crate) fn run_cmd_streaming(
                 ));
             }
             Err(e) => {
+                let _ = kill_tree(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = t_out.join();
@@ -194,6 +222,7 @@ pub(crate) fn run_cmd_streaming(
         t_out.join().unwrap_or_default(),
         t_err.join().unwrap_or_default(),
     );
+    lock_ok(&log).line(&format!("----- {} 退出码：{} -----", op_name, status));
     if status.success() {
         return Ok(());
     }
@@ -218,6 +247,12 @@ pub(crate) fn run_cmd_streaming(
     Err(msg)
 }
 
+/// 向共享的 AppLog 写一行（容忍 Mutex 中毒，日志失败绝不影响主流程）
+fn log_ok(log: &std::sync::Mutex<AppLog>, line: &str) {
+    let mut guard = lock_ok(log);
+    guard.line(line);
+}
+
 pub(crate) fn run_npm_cmd(cmd: &mut Command, progress: &Channel<String>) -> Result<(), String> {
     run_cmd_streaming(cmd, progress, "npm")
 }
@@ -226,9 +261,16 @@ pub(crate) fn run_npm_cmd(cmd: &mut Command, progress: &Channel<String>) -> Resu
 /// 并带 30 秒超时保护（npm fetch-timeout 默认 5 分钟，registry 挂起时
 /// 不能无限等待）。stdout/stderr 由独立线程持续排空：轮询等待期间若输出
 /// 超过管道缓冲（64KB）会令子进程阻塞，旧实现只读不排会假超时。
-pub(crate) fn npm_view_version(pkg: &str, env: &[(String, String)]) -> Result<String, String> {
+/// 执行一次 npm 查询命令：stdout/stderr 各自线程持续排空、带超时与进程树终止。
+/// `npm_view_version` / `npm_view_publish_time` 共用（旧实现把这段逻辑抄了两份，
+/// 其中一份漏了排空导致假超时——现在只有一处需要维护）。
+fn run_npm_query(
+    args: &[&str],
+    env: &[(String, String)],
+    timeout: Duration,
+) -> Result<(Vec<u8>, Vec<u8>, std::process::ExitStatus), String> {
     let mut cmd = Command::new(npm_program());
-    cmd.args(["view", pkg, "version"])
+    cmd.args(args)
         .creation_flags(CREATE_NO_WINDOW)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -249,7 +291,7 @@ pub(crate) fn npm_view_version(pkg: &str, env: &[(String, String)]) -> Result<St
         let _ = BufReader::new(err_pipe).read_to_end(&mut buf);
         buf
     });
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + timeout;
     let status;
     loop {
         match child.try_wait() {
@@ -259,6 +301,7 @@ pub(crate) fn npm_view_version(pkg: &str, env: &[(String, String)]) -> Result<St
             }
             Ok(None) => {}
             Err(e) => {
+                let _ = kill_tree(child.id());
                 let _ = child.kill();
                 let _ = t_out.join();
                 let _ = t_err.join();
@@ -266,35 +309,49 @@ pub(crate) fn npm_view_version(pkg: &str, env: &[(String, String)]) -> Result<St
             }
         }
         if std::time::Instant::now() >= deadline {
+            let _ = kill_tree(child.id());
             let _ = child.kill();
             let _ = child.wait();
             let _ = t_out.join();
             let _ = t_err.join();
-            return Err("npm view 超时（30 秒），registry 响应过慢".into());
+            return Err(format!(
+                "npm 查询超时（{} 秒），registry 响应过慢",
+                timeout.as_secs()
+            ));
         }
         std::thread::sleep(Duration::from_millis(250));
     }
-    let out_bytes = t_out.join().unwrap_or_default();
-    let err_bytes = t_err.join().unwrap_or_default();
+    Ok((
+        t_out.join().unwrap_or_default(),
+        t_err.join().unwrap_or_default(),
+        status,
+    ))
+}
+
+/// npm 非零退出的错误信息（取 stderr 末尾若干非空行）
+fn npm_failure_message(op: &str, status: std::process::ExitStatus, err: &[u8]) -> String {
+    let text = String::from_utf8_lossy(err);
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let tail = lines
+        .iter()
+        .rev()
+        .take(8)
+        .rev()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    if tail.is_empty() {
+        format!("{} 失败（退出码 {}）", op, status)
+    } else {
+        format!("{} 失败（退出码 {}）：\n{}", op, status, tail)
+    }
+}
+
+pub(crate) fn npm_view_version(pkg: &str, env: &[(String, String)]) -> Result<String, String> {
+    let (out_bytes, err_bytes, status) =
+        run_npm_query(&["view", pkg, "version"], env, Duration::from_secs(30))?;
     if !status.success() {
-        let stderr_text = String::from_utf8_lossy(&err_bytes);
-        let lines: Vec<&str> = stderr_text
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .collect();
-        let tail = lines
-            .iter()
-            .rev()
-            .take(8)
-            .rev()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Err(if tail.is_empty() {
-            format!("npm view 失败（退出码 {}）", status)
-        } else {
-            format!("npm view 失败（退出码 {}）：\n{}", status, tail)
-        });
+        return Err(npm_failure_message("npm view", status, &err_bytes));
     }
     String::from_utf8_lossy(&out_bytes)
         .lines()
@@ -303,4 +360,27 @@ pub(crate) fn npm_view_version(pkg: &str, env: &[(String, String)]) -> Result<St
         .find(|l| !l.is_empty())
         .map(|s| s.to_string())
         .ok_or_else(|| "npm view 无输出".into())
+}
+
+/// 查询某个具体版本的发布时间（registry `time` 表里的 RFC3339 UTC 字符串）。
+///
+/// 只在"确实存在可更新版本"时才调用一次，不给常规检查增加开销。
+/// 失败返回 None：调用方降级为"不显示发布年龄"，不影响更新本身。
+pub(crate) fn npm_view_publish_time(
+    pkg: &str,
+    version: &str,
+    env: &[(String, String)],
+) -> Option<String> {
+    // `time` 表可能很大（含全部历史版本），单独查询比拉整个 packument 省
+    let (out_bytes, _err, status) = run_npm_query(
+        &["view", pkg, "time", "--json"],
+        env,
+        Duration::from_secs(30),
+    )
+    .ok()?;
+    if !status.success() {
+        return None;
+    }
+    let json: serde_json::Value = serde_json::from_slice(&out_bytes).ok()?;
+    json.get(version)?.as_str().map(|s| s.to_string())
 }

@@ -11,6 +11,12 @@ jobs:
   rust:
     name: Rust 检查与测试
     runs-on: windows-latest
+    env:
+      # rustc 1.98.0（windows-msvc）在「增量编译 + clippy + 已存在 test 产物」
+      # 的组合下会 ICE（rustc_metadata/rmeta/encoder.rs: no entry found for key），
+      # 与源码无关，可稳定复现于未改动的提交。CI 也吃不到增量编译的收益，
+      # 直接关闭以消除随机失败。
+      CARGO_INCREMENTAL: 0
     steps:
       - uses: actions/checkout@v4
       - name: 安装 Rust 工具链

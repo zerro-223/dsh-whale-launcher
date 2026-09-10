@@ -107,6 +107,9 @@ pub(crate) struct SettingsPatch {
     plugin_profile: Option<String>,
     registry: Option<String>,
     close_action: Option<String>,
+    /// Web 服务端口。此前不在补丁里，导致"端口被占用"的提示让用户去手改
+    /// settings.json——界面里根本没有改端口的入口（问题②的直接成因之一）。
+    web_port: Option<u16>,
 }
 
 #[tauri::command]
@@ -141,6 +144,13 @@ pub(crate) fn save_settings(patch: SettingsPatch) -> Result<Settings, String> {
         }
         s.close_action = v;
     }
+    if let Some(v) = patch.web_port {
+        // 0 = 让系统随机分配端口，对用户是"看不见的服务"，明确拒绝
+        if v == 0 {
+            return Err("Web 端口必须在 1–65535 之间".into());
+        }
+        s.web_port = v;
+    }
     // 合并写回 settings.json（保留文件中未管理的字段）
     let path = beside_exe("settings.json");
     let raw = std::fs::read_to_string(&path).unwrap_or_default();
@@ -166,6 +176,7 @@ pub(crate) fn save_settings(patch: SettingsPatch) -> Result<Settings, String> {
     obj.insert("pluginProfile".into(), serde_json::json!(s.plugin_profile));
     obj.insert("registry".into(), serde_json::json!(s.registry));
     obj.insert("closeAction".into(), serde_json::json!(s.close_action));
+    obj.insert("webPort".into(), serde_json::json!(s.web_port));
     let serialized = serde_json::to_string_pretty(&json)
         .map_err(|e| format!("序列化 settings.json 失败：{}", e))?;
     write_atomic(&path, &serialized, "settings")?;

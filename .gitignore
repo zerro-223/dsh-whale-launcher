@@ -1,5 +1,7 @@
 # 构建产物
 tauri/src-tauri/target/
+# 本地 Release 构建目录（交付 exe 已复制到 DSH启动器/）
+target-release/
 # Tauri 构建时生成的 ACL schema（随 Tauri 版本变化，不入库）
 tauri/src-tauri/gen/
 
@@ -11,6 +13,8 @@ DSH启动器/
 # 绝不能入库（exe 放在仓库根目录测试时会在这里生成）
 backups/
 web.log
+# 启动器自身运行日志（子进程完整输出，含本机路径）
+launcher.log
 
 # 本地配置（含个人路径，勿上传）
 settings.json

@@ -12,15 +12,16 @@
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::ipc::Channel;
 
 use crate::locate::{dsh_home_dir, find_bin, find_dsh, DSH_PKG_NAME};
-use crate::npm::{apply_registry, npm_view_version, run_cmd_streaming};
+use crate::npm::{apply_registry, npm_view_publish_time, npm_view_version, run_cmd_streaming};
 use crate::proxy::npm_proxy_env;
 use crate::settings::settings;
-use crate::util::{write_atomic, CREATE_NO_WINDOW};
+use crate::util::{app_log_line, write_atomic, CREATE_NO_WINDOW};
 
 fn profile_dir() -> PathBuf {
     dsh_home_dir()
@@ -575,6 +576,62 @@ pub(crate) async fn plugin_remove(
     .map_err(|e| e.to_string())?
 }
 
+/// 是否是"新版本尚未同步完成"导致的失败。
+///
+/// 现象：检查更新能查到新版本（`npm view` 已经看得到），但一点更新就报错。
+/// 成因有两类，都会命中下面这些特征串：
+/// - pnpm 自己的 registry 元数据缓存还没刷新 → `ERR_PNPM_NO_MATCHING_VERSION` / `ETARGET`
+/// - packument 已更新、tarball 还没传播到 registry 的 CDN 边缘 → `ERR_PNPM_FETCH_404` / `E404`
+///
+/// 检查更新用的是 npm、实际安装用的是 pnpm，两者各自维护缓存，所以"看得见装不上"
+/// 是必然会出现的时间窗（本机实测：某插件发布后 17 秒就被查出来并点了更新）。
+fn is_fresh_package_error(msg: &str) -> bool {
+    const NEEDLES: [&str; 6] = [
+        "ERR_PNPM_NO_MATCHING_VERSION",
+        "No matching version found",
+        "ERR_PNPM_FETCH_404",
+        "ETARGET",
+        "E404",
+        "404 Not Found",
+    ];
+    NEEDLES.iter().any(|n| msg.contains(n))
+}
+
+/// 执行插件更新命令；遇到"新版本还没同步好"的错误时短暂等待后重试一次。
+/// 重试仍失败则补一段可行动的说明（等几分钟，而不是反复点点点）。
+fn run_plugin_update_with_retry(
+    args: &[&str],
+    proxy_on: bool,
+    proxy_addr: &str,
+    progress: &Channel<String>,
+    label: &str,
+) -> Result<(), String> {
+    let first = run_plugin_cmd(args, proxy_on, proxy_addr, progress);
+    let Err(e) = first else {
+        return Ok(());
+    };
+    if !is_fresh_package_error(&e) {
+        return Err(e);
+    }
+    let _ = progress.send(
+        "检测到新版本尚未同步完成（registry 元数据/包文件传播中），3 秒后重试一次…".to_string(),
+    );
+    app_log_line(&format!(
+        "{} 首次失败，疑似发布同步延迟，重试一次：{}",
+        label,
+        e.replace('\n', " ")
+    ));
+    std::thread::sleep(Duration::from_secs(3));
+    match run_plugin_cmd(args, proxy_on, proxy_addr, progress) {
+        Ok(()) => Ok(()),
+        Err(e2) => Err(format!(
+            "{}\n\n该版本可能刚发布不久：registry 元数据或包文件尚未在你本地与 CDN 同步完成。\
+             建议等 5–30 分钟后重试；完整输出已写入 exe 旁 launcher.log",
+            e2
+        )),
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn plugin_update(
     all: bool,
@@ -589,7 +646,13 @@ pub(crate) async fn plugin_update(
     }
     tauri::async_runtime::spawn_blocking(move || {
         if all {
-            run_plugin_cmd(&["update", "--latest"], proxy_on, &proxy_addr, &progress)?;
+            run_plugin_update_with_retry(
+                &["update", "--latest"],
+                proxy_on,
+                &proxy_addr,
+                &progress,
+                "全部插件更新",
+            )?;
             return Ok("all".to_string());
         }
         let name = name
@@ -613,11 +676,12 @@ pub(crate) async fn plugin_update(
                 }
             }
         }
-        run_plugin_cmd(
+        run_plugin_update_with_retry(
             &["update", "--latest", &name],
             proxy_on,
             &proxy_addr,
             &progress,
+            &format!("插件 {} 更新", name),
         )?;
         Ok(name)
     })
@@ -632,6 +696,32 @@ pub(crate) struct PluginUpdateInfo {
     installed: String,
     latest: String,        // registry 最新版本；空表示未检查（本地依赖）或检查失败
     error: Option<String>, // npm view 失败原因（网络 / 包不存在等）
+    /// latest 的发布时间（RFC3339 UTC）；未知为 None
+    published_at: Option<String>,
+    /// latest 距今多少分钟（由 published_at 换算）；未知为 None。
+    /// 界面据此对"刚发布"的版本降级提示：从发布到可稳定安装之间有传播延迟。
+    age_minutes: Option<i64>,
+}
+
+impl PluginUpdateInfo {
+    /// 无需查询的条目（本地依赖 / 已是最新 / 名字非法）
+    fn bare(name: &str, installed: &str) -> Self {
+        PluginUpdateInfo {
+            name: name.to_string(),
+            installed: installed.to_string(),
+            latest: String::new(),
+            error: None,
+            published_at: None,
+            age_minutes: None,
+        }
+    }
+
+    fn with_error(name: &str, installed: &str, err: impl Into<String>) -> Self {
+        PluginUpdateInfo {
+            error: Some(err.into()),
+            ..Self::bare(name, installed)
+        }
+    }
 }
 
 /// 该 spec 是否走 npm registry（file: / link: / git: / 路径等本地或 VCS
@@ -681,31 +771,24 @@ pub(crate) async fn plugin_check_updates(
         let mut pending: Vec<(usize, String, String)> = Vec::new(); // (slot, name, installed)
         for (name, spec) in &deps {
             if validate_installed_name(name).is_err() {
-                slots.push(Some(PluginUpdateInfo {
-                    name: name.clone(),
-                    installed: String::new(),
-                    latest: String::new(),
-                    error: Some("清单中的插件名无效，已跳过检查".into()),
-                }));
+                slots.push(Some(PluginUpdateInfo::with_error(
+                    name,
+                    "",
+                    "清单中的插件名无效，已跳过检查",
+                )));
                 continue;
             }
             let installed = installed_pkg_info(&profile, name)
                 .map(|(v, _, _, _)| v)
                 .unwrap_or_default();
             if installed.is_empty() {
-                slots.push(Some(PluginUpdateInfo {
-                    name: name.clone(),
-                    installed,
-                    latest: String::new(),
-                    error: Some("未找到已安装的 package.json".into()),
-                }));
+                slots.push(Some(PluginUpdateInfo::with_error(
+                    name,
+                    "",
+                    "未找到已安装的 package.json",
+                )));
             } else if !is_registry_spec(spec) {
-                slots.push(Some(PluginUpdateInfo {
-                    name: name.clone(),
-                    installed,
-                    latest: String::new(),
-                    error: None,
-                }));
+                slots.push(Some(PluginUpdateInfo::bare(name, &installed)));
             } else {
                 slots.push(None);
                 pending.push((slots.len() - 1, name.clone(), installed));
@@ -721,35 +804,46 @@ pub(crate) async fn plugin_check_updates(
                     let name = name.clone();
                     let installed = installed.clone();
                     handles.push(s.spawn(move || {
-                        (
-                            slot,
-                            match npm_view_version(&name, &env) {
-                                Ok(latest) => PluginUpdateInfo {
+                        let info = match npm_view_version(&name, &env) {
+                            Ok(latest) => {
+                                // 只在"确实存在可更新版本"时才补查一次发布时间，
+                                // 让常规的"已是最新"检查保持零额外开销
+                                let (published_at, age_minutes) =
+                                    if crate::util::cmp_ver(&latest, &installed)
+                                        == std::cmp::Ordering::Greater
+                                    {
+                                        match npm_view_publish_time(&name, &latest, &env) {
+                                            Some(t) => {
+                                                let age = crate::util::parse_rfc3339_utc_secs(&t)
+                                                    .map(|secs| {
+                                                        (crate::util::now_epoch_secs() - secs) / 60
+                                                    });
+                                                (Some(t), age)
+                                            }
+                                            None => (None, None),
+                                        }
+                                    } else {
+                                        (None, None)
+                                    };
+                                PluginUpdateInfo {
                                     name,
                                     installed,
                                     latest,
                                     error: None,
-                                },
-                                Err(e) => PluginUpdateInfo {
-                                    name,
-                                    installed,
-                                    latest: String::new(),
-                                    error: Some(e),
-                                },
-                            },
-                        )
+                                    published_at,
+                                    age_minutes,
+                                }
+                            }
+                            Err(e) => PluginUpdateInfo::with_error(&name, &installed, e),
+                        };
+                        (slot, info)
                     }));
                 }
                 for h in handles {
                     let (slot, info) = h.join().unwrap_or_else(|_| {
                         (
                             usize::MAX,
-                            PluginUpdateInfo {
-                                name: String::new(),
-                                installed: String::new(),
-                                latest: String::new(),
-                                error: Some("检查线程异常".into()),
-                            },
+                            PluginUpdateInfo::with_error("", "", "检查线程异常"),
                         )
                     });
                     if slot != usize::MAX {
@@ -760,14 +854,7 @@ pub(crate) async fn plugin_check_updates(
         });
         let results: Vec<PluginUpdateInfo> = slots
             .into_iter()
-            .map(|s| {
-                s.unwrap_or_else(|| PluginUpdateInfo {
-                    name: String::new(),
-                    installed: String::new(),
-                    latest: String::new(),
-                    error: Some("检查线程异常".into()),
-                })
-            })
+            .map(|s| s.unwrap_or_else(|| PluginUpdateInfo::with_error("", "", "检查线程异常")))
             .collect();
         Ok(results)
     })

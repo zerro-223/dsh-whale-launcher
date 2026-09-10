@@ -96,12 +96,11 @@ for (const delay of [1500, 4000, 8000]) {
 
 // 自定义标题栏按钮：最小化直接最小化；关闭走 close() 触发上方
 // onCloseRequested 统一处理（tray = 隐藏到托盘 / quit = 放行退出）
-$("tbMin").addEventListener("click", () => { curWin.minimize().catch(() => {}); });
-$("tbClose").addEventListener("click", () => { curWin.close().catch(() => {}); });
+$("tbMin")?.addEventListener("click", () => { curWin.minimize().catch(() => {}); });
+$("tbClose")?.addEventListener("click", () => { curWin.close().catch(() => {}); });
 
 // ---------------- 活动栏与全局日志面板 ----------------
-const activity = $("activity");
-function setActivity(msg) { activity.textContent = msg; }
+function setActivity(msg) { setEl("activity", "textContent", msg); }
 // 后端错误信息可能含多行日志末尾，压成一行并截断（完整内容见 exe 旁 web.log）
 function cleanMsg(e) {
   const s = String(e).replace(/\s*\n+\s*/g, " · ");
@@ -118,17 +117,19 @@ function showError(title, e) {
 
 // 全局日志面板：npm/pnpm 完整输出流式显示，或展示 web.log 内容
 // 追加走 rAF 攒帧批量渲染：pnpm/npm 高频逐行输出时不再每行触发一次 DOM 写
+// 所有 DOM 访问经 setEl 守卫：本对象在 catch 分支（showError）里也会被调用，
+// 自身抛异常会把原始错误一起吞掉。
 const logPanel = {
   lines: 0,
   pending: [],
   rafId: 0,
-  title(t) { $("logTitle").textContent = t; },
-  open() { $("logPanel").hidden = false; },
-  close() { $("logPanel").hidden = true; },
+  title(t) { setEl("logTitle", "textContent", t); },
+  open() { setEl("logPanel", "hidden", false); },
+  close() { setEl("logPanel", "hidden", true); },
   clear() {
     this.pending.length = 0;
     if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = 0; }
-    $("logBody").textContent = "";
+    setEl("logBody", "textContent", "");
     this.lines = 0;
   },
   append(s) {
@@ -138,7 +139,7 @@ const logPanel = {
       this.rafId = 0;
       const el = $("logBody");
       const batch = this.pending.splice(0, this.pending.length);
-      if (!batch.length) return;
+      if (!el || !batch.length) return;
       el.textContent += batch.join("\n") + "\n";
       this.lines += batch.length;
       if (this.lines > 400) { // 上限保护，只保留最近 300 行
@@ -150,13 +151,25 @@ const logPanel = {
   },
   show(title, text) { this.title(title); this.clear(); this.append(text); this.open(); },
 };
-$("logClose").addEventListener("click", () => logPanel.close());
-$("logLink").addEventListener("click", async () => {
+$("logClose")?.addEventListener("click", () => logPanel.close());
+$("logLink")?.addEventListener("click", async () => {
   try {
     const [text, exists] = await invoke("read_web_log");
     if (!exists) { logPanel.show("web.log", "web.log 不存在（DSH Web 模式尚未启动过）"); return; }
     logPanel.show("web.log", text.trim() ? text : "（web.log 为空）");
   } catch (e) { logPanel.show("web.log", "读取失败：" + String(e)); }
+});
+// 启动器自身日志：npm / pnpm / dsh plugin 的完整输出落盘于此，
+// 更新或插件操作失败后这是唯一能事后复查原始报错的地方
+$("launcherLogLink")?.addEventListener("click", async () => {
+  try {
+    const [text, exists] = await invoke("read_launcher_log");
+    if (!exists) {
+      logPanel.show("launcher.log", "launcher.log 不存在（尚未执行过安装/更新/插件操作）");
+      return;
+    }
+    logPanel.show("launcher.log", text.trim() ? text : "（launcher.log 为空）");
+  } catch (e) { logPanel.show("launcher.log", "读取失败：" + String(e)); }
 });
 
 // ---------------- 页面可见性（极光动画暂停，见 style.css 同名规则） ----------------

@@ -10,6 +10,60 @@ const { invoke } = window.__TAURI__.core;
 
 const $ = (id) => document.getElementById(id);
 
+// ---------------- 元素契约自检 ----------------
+// 无构建链，HTML 与 JS 的 id 只能靠约定对齐：某个 id 一旦漂移，对应初始化
+// 会静默失效。业务脚本的顶层绑定统一用 ?.（`$("x")?.addEventListener`）守卫，
+// 避免某一处缺失抛异常后中断其后全部绑定；这里再在启动时一次性列出缺失项，
+// 使"某个功能没反应"能立刻定位到根因，而不是只剩控制台里一条栈。
+//
+// 清单语义 = "JS 会主动访问的元素"（不是"全部元素"）。这条不变式由
+// test/element-contract.test.mjs 双向强制：清单里的 id 必须存在于
+// index.html，JS 里 $("…") 引用的 id 也必须列入清单，否则 CI 失败。
+const REQUIRED_IDS = [
+  // 外壳
+  "titlebar", "tbMin", "tbClose", "page", "appLayout", "sidebar", "workspace", "main", "footer",
+  // 导航与侧栏
+  "homeBtn", "pluginMgrBtn", "pluginNavBadge", "settingsBtn",
+  "sideBrowserBtn", "sideRestartBtn", "sideLogsBtn", "sideThemeBtn", "sideStatusText", "sideVersion",
+  // 头部
+  "logo", "productKicker", "title", "subtitle", "statusPill", "headerActions",
+  "themeBtn", "updateBtn", "repoBtn", "banner", "bannerText", "bannerBtn",
+  // 首页
+  "viewHome", "runtimePort", "webBtn", "browserBtn", "restartBtn", "webCloseBtn", "advancedLink",
+  "runtimeBadge", "runtimeStateIcon", "runtimeLabel", "runtimeUrl", "runtimeLogBtn",
+  "portConflict", "pcTitle", "pcBody", "pcKillBtn", "pcRecheckBtn", "pcPortInput", "pcPortApply",
+  "recheckBtn", "checks", "checksBtns", "fixBtn",
+  // 插件管理
+  "viewPlugins", "installRow", "pluginNameInput", "pluginInstallBtn", "pluginSummaryText",
+  "pluginOpsRow", "pluginCheckBtn", "pluginUpdateAllBtn", "pluginOpsHint", "pluginList", "pluginHint",
+  // 设置
+  "viewSettings", "accentSwatches", "setProxySwitch", "setProxyInput", "setProxyImport", "setPortInput",
+  "setAutoCheck", "setAutoBrowser", "setAutoStart", "setCloseSeg", "setProfileSelect", "setRegistryInput",
+  "backupBtn", "backupDirBtn", "dirBtn", "cmdBtn", "backupList", "backupHint", "tuiBtn",
+  // 日志与页脚
+  "logPanel", "logTitle", "logClose", "logBody", "activity", "logLink", "launcherLogLink",
+  "profilePath", "version",
+];
+function assertRequiredIds() {
+  const missing = REQUIRED_IDS.filter((id) => !$(id));
+  if (missing.length) {
+    console.error(
+      "[DSH 启动器] index.html 缺少以下元素，相关功能将不可用：\n  #" + missing.join("\n  #")
+    );
+  }
+  return missing;
+}
+
+// 元素缺失时安全跳过赋值：?. 只能用于方法调用，属性赋值
+// （disabled / hidden / textContent 等）需要这一层包装，否则共享的
+// 状态切换函数（setPluginBusy / setBackupBusy 等）会在元素缺失时抛异常，
+// 而它们多在 try 之外被调用——表现为按钮点了没反应且没有提示。
+function setEl(id, prop, value) {
+  const el = $(id);
+  if (el) el[prop] = value;
+  return el;
+}
+
 // ---------------- 配置（localStorage） ----------------
 // key 的单一来源在 theme.js（它必须最先执行以避免闪屏），此处只读取
 const CFG_KEY = window.DSH_CFG_KEY;
@@ -48,6 +102,9 @@ function initTheme() {
     applyTheme(); saveCfg();
     window.setActivity("已切换为" + themeLabel(window.cfg.theme) + "模式");
   });
+  // 侧栏快捷入口复用同一套主题循环逻辑
+  const sideTheme = $("sideThemeBtn");
+  if (sideTheme) sideTheme.addEventListener("click", () => $("themeBtn").click());
   // 系统主题变化时，跟随模式即时刷新
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
     if (window.cfg.theme === "system") applyTheme();
@@ -110,7 +167,8 @@ function uiConfirm({ title, message, okText = "确定", cancelText = "取消", d
 // 导出到 window（无模块系统下的跨文件契约，main.js / chrome.js 按名取用）
 Object.assign(window, {
   invoke,
-  escapeHtml, escapeAttr, escapeMultiline, $, formatBytes, cmpVer,
+  escapeHtml, escapeAttr, escapeMultiline, $, setEl, formatBytes, cmpVer,
+  REQUIRED_IDS, assertRequiredIds,
   loadCfg, saveCfg, CFG_KEY, resolveTheme, themeLabel, applyTheme, initTheme,
   ACCENTS, applyAccent, initAccent, uiConfirm,
 });

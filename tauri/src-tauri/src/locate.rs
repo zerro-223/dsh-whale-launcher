@@ -123,6 +123,16 @@ pub(crate) fn npm_config_cache() -> Option<String> {
     }
 }
 
+/// npm 全局前缀目录（`npm root -g` 的父目录）。
+/// 它与全局安装时的 `pkg_root` 是同一个目录，也是 `npm install -g` 的写入目标
+/// ——判断"能不能更新 DSH"就是判断这个目录能不能写。
+pub(crate) fn npm_global_prefix() -> Option<String> {
+    let root = npm_root_global()?;
+    Path::new(&root)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+}
+
 /// 扫描 {root}\_npx\ 下所有哈希目录，取最新一个含 DSH 的
 fn scan_npx_cache(root: &str) -> Option<String> {
     let npx_dir = Path::new(root).join("_npx");

@@ -108,10 +108,18 @@ fn collect_zip_entries(
     Ok(())
 }
 
-/// 把 src 目录打包为 zip（stored/deflate，目录条目含空目录），返回条目数。
-fn zip_dir_contents(src: &Path, zip_path: &Path) -> Result<usize, String> {
+/// 把 src 目录打包为 zip（stored/deflate，目录条目含空目录），
+/// 返回 (条目数, 文件总字节数)——后者用于向用户报告备份规模，
+/// 大 $DSH_HOME 打包期间前端才不会看起来像卡死。
+fn zip_dir_contents(src: &Path, zip_path: &Path) -> Result<(usize, u64), String> {
     let mut entries = Vec::new();
     collect_zip_entries(src, src, &mut entries).map_err(|e| format!("遍历备份内容失败：{}", e))?;
+    let total_bytes: u64 = entries
+        .iter()
+        .filter(|(_, _, is_dir)| !*is_dir)
+        .filter_map(|(_, p, _)| std::fs::metadata(p).ok())
+        .map(|m| m.len())
+        .sum();
     let file = std::fs::File::create(zip_path).map_err(|e| format!("创建备份文件失败：{}", e))?;
     let mut zw = zip::ZipWriter::new(file);
     // large_file：单条目 >4GB 时自动启用 zip64（会话附件目录可能很大）
@@ -132,7 +140,24 @@ fn zip_dir_contents(src: &Path, zip_path: &Path) -> Result<usize, String> {
             .map_err(|e| format!("压缩 {} 失败：{}", path.display(), e))?;
     }
     zw.finish().map_err(|e| format!("完成压缩失败：{}", e))?;
-    Ok(entries.len())
+    Ok((entries.len(), total_bytes))
+}
+
+/// 字节数的人类可读形式（备份进度展示用；只区分 KB / MB）
+fn human_size(bytes: u64) -> String {
+    const MB: f64 = 1024.0 * 1024.0;
+    if bytes as f64 >= MB {
+        format!("{:.1} MB", bytes as f64 / MB)
+    } else {
+        format!("{:.0} KB", bytes as f64 / 1024.0)
+    }
+}
+
+/// 可选进度上报（备份/恢复共用 pack_dsh_home；测试直接传 None）
+fn send_progress(progress: Option<&Channel<String>>, msg: &str) {
+    if let Some(ch) = progress {
+        let _ = ch.send(msg.to_string());
+    }
 }
 
 /// 写入 dsh-backup.json 清单（恢复时校验"这是启动器的备份"而非任意 zip）
@@ -156,7 +181,11 @@ fn write_backup_manifest(dir: &Path, ts: &str) -> Result<(), String> {
 /// 临时目录无论成败都清理。backup_dsh 与 restore_dsh 的自动备份共用。
 /// （此前经 PowerShell 调 .NET ZipArchive，现已换 zip crate：无脚本拼接
 /// 转义面，规避 PS 5.1 通配符/2GB 条目上限，且打包逻辑可单元测试）
-fn pack_dsh_home(home: &Path, zip_path: &Path) -> Result<(), String> {
+fn pack_dsh_home(
+    home: &Path,
+    zip_path: &Path,
+    progress: Option<&Channel<String>>,
+) -> Result<(), String> {
     if !home.is_dir() {
         return Err("未找到 DSH 数据目录".into());
     }
@@ -169,9 +198,14 @@ fn pack_dsh_home(home: &Path, zip_path: &Path) -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&temp);
     std::fs::create_dir_all(&temp).map_err(|e| format!("创建临时目录失败：{}", e))?;
     let result = (|| {
+        send_progress(
+            progress,
+            "正在复制 DSH 数据到临时目录（排除 node_modules）…",
+        );
         run_robocopy(home, &temp)?;
         write_backup_manifest(&temp, &ts)?;
-        zip_dir_contents(&temp, zip_path)?;
+        send_progress(progress, "正在压缩…（数据量较大时需要一段时间）");
+        let (count, bytes) = zip_dir_contents(&temp, zip_path)?;
         // 压缩自检：zip 存在、中央目录可读且至少含一个条目
         if !zip_path.is_file() {
             return Err("压缩完成但未生成备份文件".into());
@@ -184,6 +218,16 @@ fn pack_dsh_home(home: &Path, zip_path: &Path) -> Result<(), String> {
         if n == 0 {
             return Err("压缩完成但备份为空".into());
         }
+        let zip_size = std::fs::metadata(zip_path).map(|m| m.len()).unwrap_or(0);
+        send_progress(
+            progress,
+            &format!(
+                "压缩完成：{} 个条目（原始 {}）→ 备份文件 {}",
+                count,
+                human_size(bytes),
+                human_size(zip_size)
+            ),
+        );
         Ok(())
     })();
     let _ = std::fs::remove_dir_all(&temp);
@@ -665,21 +709,25 @@ pub(crate) fn cleanup_stale_temp_dirs() {
     }
 }
 
-/// 创建一份新备份（dsh-backup-<ts>.zip），保留最近 5 份
+/// 创建一份新备份（dsh-backup-<ts>.zip），保留最近 5 份。
+/// 进度经 Channel 推送：打包大 $DSH_HOME 可能耗时数分钟，
+/// 没有阶段反馈时界面上只有一个置灰按钮，看起来像卡死。
 #[tauri::command]
-pub(crate) async fn backup_dsh() -> Result<BackupInfo, String> {
-    tauri::async_runtime::spawn_blocking(|| {
+pub(crate) async fn backup_dsh(progress: Channel<String>) -> Result<BackupInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
         let _guard = OpGuard::acquire(&BACKUP_OP, "另一项备份/恢复操作正在进行，请稍候再试")?;
         if dsh_running_for_backup() {
             return Err(
                 "启动器启动的 DSH 正在运行，请先停止 DSH 再进行备份（运行中备份可能不完整）".into(),
             );
         }
+        let home = dsh_home_dir();
+        let _ = progress.send(format!("备份数据目录：{}", home.display()));
         let ts = now_stamp()?;
         let backups = backups_dir();
         std::fs::create_dir_all(&backups).map_err(|e| format!("创建备份目录失败：{}", e))?;
         let file_name = format!("dsh-backup-{}.zip", ts);
-        pack_dsh_home(&dsh_home_dir(), &backups.join(&file_name))?;
+        pack_dsh_home(&home, &backups.join(&file_name), Some(&progress))?;
         cleanup_old_backups("dsh-backup-", 5);
         let size = std::fs::metadata(backups.join(&file_name))
             .map(|m| m.len())
@@ -801,6 +849,7 @@ fn restore_dsh_impl(
             pack_dsh_home(
                 &dsh_home_dir(),
                 &backups.join(format!("pre-restore-{}.zip", ts)),
+                Some(progress),
             )?;
             cleanup_old_backups("pre-restore-", 2);
         }
@@ -902,8 +951,9 @@ mod tests {
         std::fs::write(src.join("settings.yaml"), "key: value\n中文内容").unwrap();
         std::fs::write(src.join("profiles/web/package.json"), "{}").unwrap();
         let zip = dir.join("t.zip");
-        let n = zip_dir_contents(&src, &zip).unwrap();
+        let (n, bytes) = zip_dir_contents(&src, &zip).unwrap();
         assert!(n >= 4, "应包含文件与目录条目：{}", n);
+        assert!(bytes > 0, "应统计出非零原始字节数：{}", bytes);
         let out = dir.join("out");
         std::fs::create_dir_all(&out).unwrap();
         extract_zip_safe(&zip, &out).unwrap();

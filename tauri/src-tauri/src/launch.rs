@@ -16,11 +16,14 @@ use crate::locate::{dsh_home_dir, find_bin, web_url};
 use crate::npm::apply_registry;
 use crate::plugins::run_profile_cmd;
 use crate::process::{
-    dsh_state, filter_dsh_pids, find_dsh_pids, is_running, track_dsh_pid, untrack_dsh_pid, DshState,
+    dsh_pids_for_termination, dsh_state, find_dsh_pids, is_running, track_dsh_pid, untrack_dsh_pid,
+    DshState,
 };
 use crate::proxy::{npm_proxy_env, proxy_env_or_none};
 use crate::settings::settings;
-use crate::util::{beside_exe, shell_open, OpGuard, CREATE_NEW_CONSOLE, CREATE_NO_WINDOW};
+use crate::util::{
+    beside_exe, kill_tree, shell_open, OpGuard, CREATE_NEW_CONSOLE, CREATE_NO_WINDOW,
+};
 
 /// 启动类操作互斥（start_web / start_tui / restart_dsh）
 static START_OP: AtomicBool = AtomicBool::new(false);
@@ -108,6 +111,7 @@ fn spawn_web(args: &[&str], env: &[(String, String)]) -> Result<String, String> 
         &path,
         &format!("==== DSH web 启动（PID {}）====", child.id()),
     );
+    crate::util::app_log_line(&format!("DSH web 已启动（PID {}）", child.id()));
 
     // 等待端口就绪；进程提前退出则回读日志末尾
     let deadline = std::time::Instant::now() + Duration::from_secs(8);
@@ -119,6 +123,11 @@ fn spawn_web(args: &[&str], env: &[(String, String)]) -> Result<String, String> 
         }
         if let Ok(Some(status)) = child.try_wait() {
             let tail = tail_file(&path, 8192).trim().to_string();
+            crate::util::app_log_line(&format!(
+                "DSH web 启动即退出（退出码 {}）：{}",
+                status,
+                tail.replace('\n', " ")
+            ));
             if tail.is_empty() {
                 return Err(format!(
                     "DSH 启动后立即退出（退出码 {}），web.log 无输出",
@@ -295,19 +304,17 @@ pub(crate) async fn start_tui(
 pub(crate) async fn restart_dsh(proxy_on: bool, proxy_addr: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = OpGuard::acquire(&START_OP, START_BUSY_MSG)?;
-        let pids = find_dsh_pids(settings().web_port);
-        // 仅终止命令行包含 DSH bin 路径的进程，避免 3080 被无关程序占用时误杀；
-        // /T 连同子进程树一起终止（node 的 worker 子进程不留孤儿）
-        let bin = find_bin().unwrap_or_default();
-        let dsh_pids = filter_dsh_pids(&pids, &bin);
+        let port = settings().web_port;
+        // 只终止确认为 DSH 的进程：优先命令行核验，读不到命令行（DSH 以管理员
+        // 权限运行时如此）时用 HTTP 协议特征兜底——否则会既停不掉自家 DSH、
+        // 又把它误报成"端口被其他程序占用"。/T 连同子进程树一起终止。
+        let dsh_pids = dsh_pids_for_termination(port);
+        let mut kill_err: Option<String> = None;
         for pid in &dsh_pids {
             untrack_dsh_pid(*pid);
-            let _ = Command::new("taskkill")
-                .args(["/F", "/T", "/PID", &pid.to_string()])
-                .creation_flags(CREATE_NO_WINDOW)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+            if let Err(e) = kill_tree(*pid) {
+                kill_err = Some(e);
+            }
         }
         // 等待端口释放（最多约 6 秒）
         for _ in 0..24 {
@@ -317,10 +324,14 @@ pub(crate) async fn restart_dsh(proxy_on: bool, proxy_addr: String) -> Result<St
             std::thread::sleep(Duration::from_millis(250));
         }
         if is_running() {
+            // 终止失败就如实上报 taskkill 的原因（权限不足的下一步提示在其中）
+            if let Some(e) = kill_err {
+                return Err(format!("{}（DSH 可能仍在运行）", e));
+            }
             return Err(if dsh_pids.is_empty() {
                 format!(
-                    "端口 {} 被其他程序占用，无法重启 DSH。可修改 webPort 或停止占用程序",
-                    settings().web_port
+                    "端口 {} 被其他程序占用，无法重启 DSH。可修改 Web 端口或结束占用进程",
+                    port
                 )
             } else {
                 "still-running".into()
@@ -340,33 +351,30 @@ pub(crate) async fn restart_dsh(proxy_on: bool, proxy_addr: String) -> Result<St
     .map_err(|e| e.to_string())?
 }
 
-/// 关闭 Web 界面：仅终止监听 webPort 的 DSH 进程（带命令行身份校验，
-/// /T 连同子进程树一起终止），等待端口释放后返回，不重新启动。
+/// 关闭 Web 界面：仅终止确认的 DSH 进程（命令行核验，读不到命令行时用 HTTP
+/// 协议特征兜底；/T 连同子进程树一起终止），等待端口释放后返回，不重新启动。
 #[tauri::command]
 pub(crate) async fn stop_web() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let pids = find_dsh_pids(settings().web_port);
-        if pids.is_empty() {
+        let port = settings().web_port;
+        if find_dsh_pids(port).is_empty() {
             return Ok("not-running".to_string());
         }
-        let bin = find_bin().unwrap_or_default();
-        let dsh_pids = filter_dsh_pids(&pids, &bin);
+        let dsh_pids = dsh_pids_for_termination(port);
         if dsh_pids.is_empty() {
             return Err(format!(
                 "端口 {} 被其他程序占用，无法安全终止（启动器只终止 DSH 进程）",
-                settings().web_port
+                port
             ));
         }
         let mut killed = 0usize;
+        let mut kill_err: Option<String> = None;
         for pid in &dsh_pids {
             untrack_dsh_pid(*pid);
-            let _ = Command::new("taskkill")
-                .args(["/F", "/T", "/PID", &pid.to_string()])
-                .creation_flags(CREATE_NO_WINDOW)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-            killed += 1;
+            match kill_tree(*pid) {
+                Ok(()) => killed += 1,
+                Err(e) => kill_err = Some(e),
+            }
         }
         // 等待端口释放（最多约 6 秒）
         for _ in 0..24 {
@@ -376,6 +384,10 @@ pub(crate) async fn stop_web() -> Result<String, String> {
             std::thread::sleep(Duration::from_millis(250));
         }
         if is_running() {
+            // 把 taskkill 的真实原因带回前端（含"以管理员身份重启启动器"的下一步）
+            if let Some(e) = kill_err {
+                return Err(e);
+            }
             return Err("still-running".into());
         }
         Ok(format!("stopped:{}", killed))
@@ -403,6 +415,18 @@ pub(crate) fn open_url(url: String) -> Result<String, String> {
 #[tauri::command]
 pub(crate) fn read_web_log() -> (String, bool) {
     let path = web_log_path();
+    if !path.is_file() {
+        return (String::new(), false);
+    }
+    (tail_file(&path, 256 * 1024), true)
+}
+
+/// 读取 exe 旁 launcher.log 末尾（最大 256KB）。
+/// npm / pnpm / dsh plugin 的完整输出落盘于此——更新或插件操作失败后，
+/// 这里是唯一能事后复查原始报错的地方。
+#[tauri::command]
+pub(crate) fn read_launcher_log() -> (String, bool) {
+    let path = crate::util::app_log_path();
     if !path.is_file() {
         return (String::new(), false);
     }
